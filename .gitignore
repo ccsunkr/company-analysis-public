@@ -1,0 +1,10 @@
+# 로컬 프록시가 만드는 캐시 (개인 환경 전용 — 커밋 금지)
+serverless/corpCode.cache.zip
+
+# 파이썬 부산물
+__pycache__/
+*.pyc
+
+# OS 부산물
+Thumbs.db
+.DS_Store

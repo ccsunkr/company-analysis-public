@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>기업 추가 / 편집 — 기업분석</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+  <style>
+    #toast { display:none; position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+      background:var(--navy); color:#fff; padding:12px 18px; border-radius:10px; font-size:13px;
+      max-width:560px; box-shadow:var(--shadow); z-index:50; line-height:1.5; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand">
+        <h1>기업 추가 / 편집</h1>
+        <p>DART 공시 재무 데이터를 입력하면 밸류에이션과 조합 차트가 실시간으로 계산됩니다</p>
+      </div>
+      <div class="header-actions">
+        <a class="btn ghost" href="index.html">← 목록으로</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <div class="field" style="max-width:420px">
+        <label for="company-select">편집할 기업 선택</label>
+        <select id="company-select"></select>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn primary" id="btn-save">💾 로컬 저장</button>
+        <button class="btn" id="btn-export-one">⬇ 이 기업 JSON</button>
+        <button class="btn" id="btn-export-all">⬇ data.js 전체 (커밋용)</button>
+        <label class="btn" style="cursor:pointer">⬆ JSON 가져오기<input type="file" id="file-import" accept="application/json,.json" hidden></label>
+        <button class="btn danger" id="btn-delete">🗑 삭제</button>
+      </div>
+      <p class="small-note" style="margin-top:-6px">
+        <b>로컬 저장</b>은 이 브라우저에만 저장됩니다(즉시 목록에 표시). <b>공개 사이트에 영구 반영</b>하려면
+        「data.js 전체」를 내려받아 저장소의 <code>assets/js/data.js</code>를 교체하고 커밋하세요.
+      </p>
+
+      <hr class="divider" />
+
+      <div class="editor-layout">
+        <!-- ===== 입력 폼 ===== -->
+        <div class="form-panel">
+          <div class="fieldset-title">기본 정보</div>
+          <div class="row2">
+            <div class="field"><label>기업 ID <span class="desc">영문 소문자 (예: samsung)</span></label><input id="f-id" placeholder="samsung"></div>
+            <div class="field"><label>기업명</label><input id="f-name" placeholder="삼성전자"></div>
+          </div>
+          <div class="row3">
+            <div class="field"><label>종목코드</label><input id="f-ticker" placeholder="005930"></div>
+            <div class="field"><label>시장</label>
+              <select id="f-market"><option>KOSPI</option><option>KOSDAQ</option><option>KONEX</option><option>NASDAQ</option><option>NYSE</option><option>기타</option></select></div>
+            <div class="field"><label>업종/섹터</label><input id="f-sector" placeholder="반도체"></div>
+          </div>
+          <div class="row3">
+            <div class="field"><label>재무제표 기준</label>
+              <select id="f-statement"><option>연결</option><option>별도</option></select></div>
+            <div class="field"><label>재무 단위</label>
+              <select id="f-unit"><option>조원</option><option>억원</option><option>백만원</option><option>천원</option></select></div>
+            <div class="field"><label>업데이트 일자</label><input id="f-updated" placeholder="2026-07-02"></div>
+          </div>
+
+          <div class="fieldset-title">⚡ 자동 입력 ① — OpenDART API (권장)</div>
+          <p class="small-note">위에서 <b>종목코드·재무 단위·연결/별도</b>를 설정한 뒤 버튼 하나로 <b>분기 매출액·영업이익·순이익 + 자본총계 + 발행주식총수</b>를 자동 수집합니다. → ROE·EPS성장률·PEG·PER이 바로 계산됩니다. API 키는 <a href="https://opendart.fss.or.kr" target="_blank">opendart.fss.or.kr</a>에서 무료 발급.</p>
+          <div class="field">
+            <label>OpenDART API 인증키 <span class="desc">한 번만 입력 — 이 브라우저에 저장됩니다</span></label>
+            <input id="dart-key" type="password" placeholder="40자리 인증키" autocomplete="off">
+          </div>
+          <div class="toolbar">
+            <select id="dart-years" style="width:auto">
+              <option value="3">최근 3년</option>
+              <option value="5" selected>최근 5년</option>
+              <option value="8">최근 8년</option>
+              <option value="10">최근 10년</option>
+            </select>
+            <button class="btn primary" id="btn-dartapi" type="button">⚡ OpenDART에서 재무 자동 수집</button>
+          </div>
+          <p class="small-note" id="dartapi-proxy-note"></p>
+          <p class="small-note" id="dartapi-status"></p>
+          <p class="small-note">OpenDART 주요계정에 없는 <b>매출원가·판관비·OCF·CAPEX·재고자산·매출채권</b>은 아래 PDF 업로드 또는 수기로 보완하세요.</p>
+
+          <div class="fieldset-title">⚡ 자동 입력 ② — DART 보고서 PDF · 네이버 시세</div>
+          <p class="small-note">① 위에서 <b>재무 단위</b>와 <b>종목코드</b>를 먼저 설정 → ② DART <b>분기·반기·사업 보고서</b>를 <b>여러 개 한꺼번에</b> 선택해 업로드(연결재무제표 포함본) → ③ 네이버에서 현재가. 업로드 순서와 무관하게 <b>연도·분기 순으로 자동 정렬</b>해 적용하므로(사업보고서는 Q4 계산을 위해 맨 마지막), 2~3년치를 한 번에 올리면 됩니다.</p>
+          <div class="toolbar">
+            <label class="btn" style="cursor:pointer">📄 DART 보고서 PDF 업로드 (여러 개 가능)<input type="file" id="dart-file" accept="application/pdf,.pdf" multiple hidden></label>
+            <button class="btn" id="btn-naver" type="button">📈 네이버에서 현재가·주식수</button>
+          </div>
+          <p class="small-note" id="dart-status"></p>
+          <p class="small-note" id="naver-status"></p>
+          <div class="field" style="margin-top:6px">
+            <label>프록시 URL (네이버·OpenDART 공용) <span class="desc">한 번만 입력, 브라우저에 저장. OpenDART 수집에는 필수.</span></label>
+            <input id="naver-proxy" type="text" placeholder="http://127.0.0.1:8321 또는 https://…workers.dev">
+            <p class="small-note"><b>OpenDART는 해외 IP(Cloudflare 워커)를 차단하는 경우가 많습니다.</b> 수집이 시간 초과로 실패하면
+              터미널에서 <code>python serverless/dart-local-proxy.py</code> 실행 후 여기에 <code>http://127.0.0.1:8321</code>을 입력하세요(내 PC에서 직접 중계, 편집할 때만 켜두면 됨).
+              Cloudflare Worker 배포 방법: <code>serverless/README.md</code>.</p>
+          </div>
+          <div id="dart-preview"></div>
+
+          <div class="fieldset-title">분기 실적 (선택한 재무 단위 기준)</div>
+          <p class="small-note">노란 칸은 DART 사업/분기보고서에서 발췌하는 선택 입력입니다. <b>매출원가</b>→GPM·판관비율, <b>OCF·CAPEX</b>→FCF, <b>재고자산·매출채권</b>→회전율, <b>순이익</b>(4분기)→TTM PER이 자동 계산됩니다.</p>
+          <div class="toolbar">
+            <button class="btn sm" id="btn-gen20">📅 5년(20분기) 라벨 생성</button>
+            <button class="btn sm" id="btn-addq">＋ 분기 행 추가</button>
+          </div>
+          <div class="tbl-scroll">
+            <table class="qtable">
+              <thead><tr>
+                <th>분기</th><th>매출액</th><th>영업이익</th>
+                <th style="color:var(--amber)">매출원가</th><th style="color:var(--amber)">판관비</th>
+                <th style="color:var(--amber)">순이익</th><th style="color:var(--amber)">OCF</th>
+                <th style="color:var(--amber)">CAPEX</th><th style="color:var(--amber)">재고자산</th>
+                <th style="color:var(--amber)">매출채권</th><th></th>
+              </tr></thead>
+              <tbody id="qtable-body"></tbody>
+            </table>
+          </div>
+
+          <div class="fieldset-title">밸류에이션 입력 (멀티플)</div>
+          <div class="row2">
+            <div class="field"><label>현재 주가 (원)</label><input id="v-price" type="number" step="any" placeholder="80000"></div>
+            <div class="field"><label>발행주식수 (주)</label><input id="v-shares" type="number" step="any" placeholder="5969782550"></div>
+          </div>
+          <div class="row2">
+            <div class="field dart"><label>순이익 TTM (조원) <span class="desc">미입력 시 분기 순이익 합 사용</span></label><input id="v-netIncomeTTM" type="number" step="any" placeholder="34.0"></div>
+            <div class="field dart"><label>자본총계 (조원) <span class="desc">DART 재무상태표</span></label><input id="v-equity" type="number" step="any" placeholder="402.0"></div>
+          </div>
+          <div class="row3">
+            <div class="field"><label>과거 PER 하단</label><input id="v-perBand-low" type="number" step="any" placeholder="8"></div>
+            <div class="field"><label>과거 PER 평균</label><input id="v-perBand-avg" type="number" step="any" placeholder="12"></div>
+            <div class="field"><label>과거 PER 상단</label><input id="v-perBand-high" type="number" step="any" placeholder="18"></div>
+          </div>
+          <div class="row3">
+            <div class="field"><label>과거 PBR 하단</label><input id="v-pbrBand-low" type="number" step="any" placeholder="0.9"></div>
+            <div class="field"><label>과거 PBR 평균</label><input id="v-pbrBand-avg" type="number" step="any" placeholder="1.3"></div>
+            <div class="field"><label>과거 PBR 상단</label><input id="v-pbrBand-high" type="number" step="any" placeholder="1.8"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>목표 PER <span class="desc">미입력 시 PER 평균 사용</span></label><input id="v-targetPer" type="number" step="any" placeholder="12"></div>
+            <div class="field"><label>목표 PBR <span class="desc">미입력 시 PBR 평균 사용</span></label><input id="v-targetPbr" type="number" step="any" placeholder="1.3"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>예상 EPS 성장률 (%) <span class="desc">PEG 계산용 — 미입력 시 연간 순이익 CAGR로 자동 산출</span></label><input id="v-epsGrowth" type="number" step="any" placeholder="15"></div>
+            <div class="field"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>주당배당금 DPS (원) <span class="desc">최근 연간 배당 — 배당 기준 적정주가용</span></label><input id="v-dps" type="number" step="any" placeholder="1444"></div>
+            <div class="field"><label>목표 배당수익률 (%) <span class="desc">과거 평균 수준 입력 (예: 2.5)</span></label><input id="v-targetDivYield" type="number" step="any" placeholder="2.5"></div>
+          </div>
+          <div class="field">
+            <label>적정주가 앵커 가중 프리셋 <span class="desc">기업의 이익 특성에 맞게 선택</span></label>
+            <select id="v-weightPreset">
+              <option value="default">기본 — 논문 T-12 근거 (PBR 0.5 · 배당 0.3 · PER 0.2)</option>
+              <option value="growth">안정 성장형 — 이익이 꾸준히 우상향 (PER 0.5 · 배당 0.3 · PBR 0.2)</option>
+              <option value="cyclical">경기민감·자산형 — 사이클 기업 (PBR 0.6 · 배당 0.3 · PER 0.1)</option>
+            </select>
+          </div>
+          <p class="small-note">적정주가는 세 앵커의 <b>가중 평균</b>입니다 (없는 앵커는 가중치 재배분).
+            기본 가중 근거: KOSPI top30 12개월 표본외 검증에서 자기 역사 대비 <b>PBR이 가장 강건</b>, 배당수익률 약한 양(+), 이익수익률(PER)은 실패.
+            ⚠ 경기민감주의 <b>사이클 고점에서 낮아 보이는 PER은 착시</b>입니다 — 그런 기업은 PBR 중심 프리셋을 쓰세요.</p>
+          <div class="field"><label style="font-weight:400"><input type="checkbox" id="v-isExample" style="width:auto"> 이 밸류에이션 수치는 <b>예시값</b>입니다 (배지 표시)</label></div>
+
+          <div class="fieldset-title">역사적 PER / PBR (밴드 자동산출)</div>
+          <p class="small-note">분기별 과거 PER(선택 PBR)을 입력하면 백분위(최저·P25·중앙·P75·최고) 밴드가 자동 계산되어 현재 위치를 판단합니다. 발행주식수·순이익을 안 넣어도 현재 PER은 이 시계열의 최신값으로 대체됩니다.</p>
+          <div class="toolbar">
+            <button class="btn sm primary" id="btn-vh-naver" type="button">📊 네이버에서 과거 PER/PBR 불러오기</button>
+            <label class="btn sm" style="cursor:pointer">📎 CSV 업로드 (KRX 등, 여러 개 가능)<input type="file" id="vh-csv" accept=".csv,text/csv" multiple hidden></label>
+            <button class="btn sm" id="btn-genvh">📅 분기 라벨 생성</button>
+            <button class="btn sm" id="btn-addvh">＋ 행 추가</button>
+          </div>
+          <p class="small-note" id="vh-status"></p>
+          <div class="tbl-scroll">
+            <table class="qtable">
+              <thead><tr><th>분기</th><th>PER(배)</th><th>PBR(배)</th><th></th></tr></thead>
+              <tbody id="vh-body"></tbody>
+            </table>
+          </div>
+          <p class="small-note" id="band-note" style="margin-top:8px"></p>
+          <p class="small-note">네이버는 최근 3~4년(연간+분기)만 제공 — 더 긴 밴드는 <b>KRX 정보데이터시스템</b>에서 PER/PBR CSV를 받아 업로드하세요. CSV는 날짜·PER·PBR 열을 자동 인식해 분기말 값만 추립니다.</p>
+
+          <div class="fieldset-title">주주환원 — 자사주 매입</div>
+          <div class="row2" style="max-width:320px">
+            <div class="field"><label>자사주 단위</label>
+              <select id="f-buybackUnit"><option>억원</option><option>백만원</option><option>원</option></select></div>
+          </div>
+          <div class="toolbar"><button class="btn sm" id="btn-addbb">＋ 행 추가</button></div>
+          <div class="tbl-scroll">
+            <table class="qtable">
+              <thead><tr><th>분기</th><th>매입액</th><th></th></tr></thead>
+              <tbody id="bb-body"></tbody>
+            </table>
+          </div>
+
+          <div class="fieldset-title">해설 (리스크 헤지 관점)</div>
+          <div id="commentary-box"></div>
+          <button class="btn sm" id="btn-addc">＋ 해설 항목 추가</button>
+        </div>
+
+        <!-- ===== 미리보기 ===== -->
+        <div class="preview-panel">
+          <div id="preview"></div>
+          <div id="checklist"></div>
+        </div>
+      </div>
+
+      <div class="disclaimer">※ 입력 데이터는 DART 공시·실시간 시세로 검증하세요. 본 도구는 투자 판단 보조용이며 매수·매도 추천이 아닙니다.</div>
+    </div>
+  </main>
+
+  <div id="toast"></div>
+
+  <script src="assets/js/data.js"></script>
+  <script src="assets/js/valuation.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/dartParser.js"></script>
+  <script src="assets/js/dartApi.js"></script>
+  <script src="assets/js/editor.js"></script>
+</body>
+</html>
