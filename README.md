@@ -156,11 +156,30 @@ company_analysis/
 
 > 아직 미포함(향후): 제품별 매출(내수/수출)·제품가×판매량(P×Q)·원재료 스프레드·가동률 등 소재기업 심층 지표.
 
-## GitHub Pages 배포
+## 친구와 공유 (GitHub Pages 배포)
 
-1. 이 폴더를 GitHub 저장소로 push (예: 저장소 루트 또는 `docs/`에 배치).
-2. 저장소 Settings → Pages → Source를 해당 브랜치/폴더로 지정.
-3. 발급된 URL로 공개. 이후 기업 추가는 위 워크플로대로 `data.js`만 갱신하면 됩니다.
+이 사이트는 **순수 정적 사이트**라 친구는 브라우저만 있으면 됩니다 — 파이썬·프록시·API 키 전부 불필요.
+(프록시·OpenDART는 **내가 데이터를 수집·편집할 때만** 쓰는 도구이고, 친구가 보는 화면은 `data.js`에 저장된 데이터를 읽을 뿐입니다.)
+
+**최초 1회 설정** (이 폴더는 이미 git 저장소로 초기화·커밋되어 있음):
+
+1. **내 데이터를 data.js에 반영**: 편집기(`http://127.0.0.1:8321/editor.html`)에서 「⬇ data.js 전체 (커밋용)」
+   → 내려받은 파일로 `assets/js/data.js` 교체. (로컬 저장 데이터는 내 브라우저에만 있으므로 이 단계가 필수!)
+2. github.com에서 새 저장소 만들기 (예: `company-analysis`, **Public** — 무료 Pages는 공개 저장소만 가능).
+3. 이 폴더에서:
+   ```bash
+   git add -A && git commit -m "데이터 갱신"
+   git remote add origin https://github.com/<아이디>/company-analysis.git
+   git push -u origin main
+   ```
+4. 저장소 **Settings → Pages → Source: Deploy from a branch → main / (root)** 선택.
+5. 몇 분 뒤 `https://<아이디>.github.io/company-analysis/` 가 생김 → 이 URL을 친구에게 공유.
+
+**이후 업데이트**: 편집기에서 데이터 수집·수정 → 「⬇ data.js 전체」로 교체 → `git add -A && git commit -m "..." && git push` 만 반복.
+
+> ⚠ **공개 범위 주의**: GitHub Pages URL은 링크를 아는 사람은 누구나 볼 수 있습니다(검색엔진 노출 가능성도 있음).
+> 분석 내용을 완전히 비공개로 두고 싶으면 Cloudflare Pages + Access(이메일 인증, 무료) 같은 방식을 검토하세요.
+> 친구가 보는 페이지에서도 「주식 성격」 드롭다운으로 가중 프리셋을 바꿔볼 수 있으며, 그 선택은 각자의 브라우저에만 저장됩니다(원본 data.js 불변).
 
 ## 주의
 
