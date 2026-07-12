@@ -48,6 +48,18 @@ python dart-local-proxy.py        # 포트 변경: python dart-local-proxy.py 90
 7. (선택) OpenDART 중계 확인: `...workers.dev/?dartPath=fnlttSinglAcnt&crtfc_key=<API키>&corp_code=00126380&bsns_year=2024&reprt_code=11011`
    → `{"status":"000", "list":[...]}`가 나오면 성공.
 
+### 공유 저장소 설정 (친구들과 공동 분석 — KV)
+
+친구들이 분석한 기업을 서로 공유하려면 워커에 저장소(KV)를 연결합니다 (무료, 5분):
+
+1. Cloudflare 대시보드 → **Storage & Databases → KV → Create namespace** → 이름 예: `company-store`.
+2. 워커 → **Settings → Bindings → Add → KV Namespace** → Variable name **`STORE`**, 방금 만든 네임스페이스 선택.
+3. 워커 → **Settings → Variables and Secrets → Add** → 이름 **`STORE_KEY`**, 값 = 팀 공유 비밀번호(친구들에게만 알려줄 문자열) → Deploy.
+4. 사이트 `assets/js/config.js`의 `sharedUrl`에 워커 주소를 넣고 커밋 → 친구는 사이트에서 **비밀번호만 입력**하면 됩니다.
+
+동작 확인: `...workers.dev/?store=list&key=<비밀번호>` → `{"companies":{}}`가 나오면 성공.
+비밀번호가 틀리면 403, KV 미설정이면 501과 함께 안내 메시지가 나옵니다.
+
 ### (선택) OpenDART 키를 워커에 저장하기
 편집기에 키를 넣는 대신 워커 환경변수로 둘 수도 있습니다(공유 시 키 노출 방지):
 Worker → **Settings → Variables and Secrets → Add** → 이름 `DART_KEY`, 값에 OpenDART 인증키 → Deploy.

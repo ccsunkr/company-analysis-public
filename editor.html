@@ -32,15 +32,19 @@
       </div>
 
       <div class="toolbar">
-        <button class="btn primary" id="btn-save">💾 로컬 저장</button>
+        <button class="btn primary" id="btn-store-save">☁ 공유 저장 (모두에게)</button>
+        <button class="btn" id="btn-save">💾 로컬 저장 (나만)</button>
         <button class="btn" id="btn-export-one">⬇ 이 기업 JSON</button>
         <button class="btn" id="btn-export-all">⬇ data.js 전체 (커밋용)</button>
         <label class="btn" style="cursor:pointer">⬆ JSON 가져오기<input type="file" id="file-import" accept="application/json,.json" hidden></label>
-        <button class="btn danger" id="btn-delete">🗑 삭제</button>
+        <button class="btn sm" id="btn-store-load">↻ 공유 새로고침</button>
+        <button class="btn danger" id="btn-delete">🗑 로컬 삭제</button>
+        <button class="btn danger" id="btn-store-delete">🗑 공유에서 삭제</button>
       </div>
+      <p class="small-note" id="store-status"></p>
       <p class="small-note" style="margin-top:-6px">
-        <b>로컬 저장</b>은 이 브라우저에만 저장됩니다(즉시 목록에 표시). <b>공개 사이트에 영구 반영</b>하려면
-        「data.js 전체」를 내려받아 저장소의 <code>assets/js/data.js</code>를 교체하고 커밋하세요.
+        <b>☁ 공유 저장</b> = 공유 서버(워커)에 저장되어 <b>친구들 목록에도 즉시 반영</b>됩니다(공유 설정 필요 — 아래 「공유 설정」).
+        <b>💾 로컬 저장</b>은 이 브라우저에만. 「data.js 전체」 커밋은 예시 데이터를 사이트에 박아 넣는 백업용 옵션입니다.
       </p>
 
       <hr class="divider" />
@@ -102,6 +106,16 @@
               Cloudflare Worker 배포 방법: <code>serverless/README.md</code>.</p>
           </div>
           <div id="dart-preview"></div>
+
+          <div class="fieldset-title">☁ 공유 설정 (친구들과 실시간 공유)</div>
+          <p class="small-note">공유 저장·공유 목록은 Cloudflare 워커의 KV 저장소를 사용합니다. 워커에 <b>KV(STORE)와 비밀번호(STORE_KEY)</b>를 한 번 설정하면(<code>serverless/README.md</code>),
+            친구는 사이트에서 <b>비밀번호만 입력</b>하면 보고·분석·저장할 수 있습니다. 공유 서버 URL을 <code>assets/js/config.js</code>에 넣어 커밋하면 친구는 URL 입력도 필요 없습니다.</p>
+          <div class="row2">
+            <div class="field"><label>공유 서버 URL <span class="desc">워커 주소 (config.js에 있으면 자동)</span></label>
+              <input id="store-url" type="text" placeholder="https://naver-proxy.<계정>.workers.dev"></div>
+            <div class="field"><label>공유 비밀번호 <span class="desc">워커 STORE_KEY와 동일하게</span></label>
+              <input id="store-key" type="password" autocomplete="off"></div>
+          </div>
 
           <div class="fieldset-title">분기 실적 (선택한 재무 단위 기준)</div>
           <p class="small-note">노란 칸은 DART 사업/분기보고서에서 발췌하는 선택 입력입니다. <b>매출원가</b>→GPM·판관비율, <b>OCF·CAPEX</b>→FCF, <b>재고자산·매출채권</b>→회전율, <b>순이익</b>(4분기)→TTM PER이 자동 계산됩니다.</p>
@@ -215,6 +229,8 @@
 
   <div id="toast"></div>
 
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/store.js"></script>
   <script src="assets/js/data.js"></script>
   <script src="assets/js/valuation.js"></script>
   <script src="assets/js/charts.js"></script>

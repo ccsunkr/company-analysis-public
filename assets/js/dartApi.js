@@ -96,6 +96,24 @@
       var cached = JSON.parse(localStorage.getItem(LS_CORP) || 'null');
       if (cached && cached.ts && (Date.now() - cached.ts) < CORP_TTL && cached.map) return Promise.resolve(cached.map);
     } catch (e) {}
+    // 공유 저장소(워커 KV)에 다른 사람이 올려둔 고유번호 맵이 있으면 그걸 사용 (zip 다운로드 생략)
+    var viaStore = (global.Store && global.Store.enabled())
+      ? global.Store.corpmapGet().then(function (m) {
+          if (m && typeof m === 'object' && Object.keys(m).length > 100) return m;
+          return null;
+        }).catch(function () { return null; })
+      : Promise.resolve(null);
+    return viaStore.then(function (m) {
+      if (m) {
+        try { localStorage.setItem(LS_CORP, JSON.stringify({ ts: Date.now(), map: m })); } catch (e) {}
+        onStatus('고유번호 목록: 공유 저장소 캐시 사용');
+        return m;
+      }
+      return downloadCorpMap(cfg, onStatus);
+    });
+  }
+
+  function downloadCorpMap(cfg, onStatus) {
     onStatus('DART 고유번호 목록 다운로드 중… (최초 1회 · OpenDART가 느리면 수 분 소요 — 로컬 프록시 터미널에 진행률 표시. 시간 초과되어도 프록시에 캐시되므로 다시 클릭하면 즉시 이어집니다)');
     return fetchWithTimeout(proxyUrl(cfg.proxy, { dartPath: 'corpCode', crtfc_key: cfg.key }), 300000, '고유번호 목록(corpCode)')
       .then(function (r) {
@@ -124,6 +142,8 @@
         }
         if (!Object.keys(map).length) throw new Error('corpCode XML에서 상장기업을 찾지 못했습니다.');
         try { localStorage.setItem(LS_CORP, JSON.stringify({ ts: Date.now(), map: map })); } catch (e) {}
+        // 공유 저장소에 업로드 — 친구들은 zip 다운로드 없이 즉시 사용 (실패해도 무시)
+        if (global.Store && global.Store.enabled()) global.Store.corpmapPut(map).catch(function () {});
         return map;
       });
   }

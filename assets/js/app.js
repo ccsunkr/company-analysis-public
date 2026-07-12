@@ -29,12 +29,21 @@
     return viewerPresets()[c.id] || V.presetKeyOf((c.valuation || {}).weights);
   }
 
+  /* 공유 저장소(워커 KV) 상태 — route()가 최초 1회 로드 */
+  var sharedCompanies = null; // null=미로드, {}=로드됨(비어있음 포함)
+  var sharedError = '';
+
   function loadCompanies() {
     var base = (window.COMPANIES || []).slice();
     var overrides = {};
     try { overrides = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { overrides = {}; }
     var byId = {};
     base.forEach(function (c) { byId[c.id] = c; });
+    // 공유 기업: data.js보다 우선 (여럿이 함께 갱신하는 최신본)
+    var sh = sharedCompanies || {};
+    Object.keys(sh).forEach(function (id) {
+      if (sh[id] && sh[id].id) { byId[id] = sh[id]; byId[id].__shared = true; }
+    });
     Object.keys(overrides).forEach(function (id) {
       if (overrides[id] && overrides[id].__deleted) { delete byId[id]; return; }
       byId[id] = overrides[id];
@@ -62,7 +71,8 @@
             '<div class="card-name">' + esc(c.name) + '</div>' +
             '<div class="card-meta">' + esc(c.market || '') + (c.sector ? ' · ' + esc(c.sector) : '') + '</div>' +
           '</div>' + (c.ticker ? '<span class="ticker-chip">' + esc(c.ticker) + '</span>' : '') + '</div>' +
-          '<div>' + signalEl(val.signal) + (val.isExample ? ' <span class="example-badge">예시값</span>' : '') + '</div>' +
+          '<div>' + signalEl(val.signal) + (val.isExample ? ' <span class="example-badge">예시값</span>' : '') +
+            (c.__shared ? ' <span class="example-badge" style="background:#e8f1fb;color:#2e75b6">☁ 공유</span>' : '') + '</div>' +
           '<div class="card-mini">' +
             '<div class="mini">상승여력' + upsideHtml + '</div>' +
             '<div class="mini">현재 PER<b>' + fmt.x(val.per) + (val.perFromHistory ? ' <span class="sub">(과거최신)</span>' : '') + '</b></div>' +
@@ -75,10 +85,35 @@
     }).join('');
     app.innerHTML =
       '<div class="gallery-head"><h2>분석 기업 ' + companies.length + '</h2>' +
-      '<a class="btn primary sm" href="editor.html">＋ 기업 추가 / 편집</a></div>' +
+      '<div style="display:flex;gap:10px;align-items:center">' + sharedStatusHtml() +
+      '<a class="btn primary sm" href="editor.html">＋ 기업 추가 / 편집</a></div></div>' +
       (companies.length ? '<div class="grid">' + cards + '</div>' : emptyState()) + disclaimer();
     Array.prototype.forEach.call(app.querySelectorAll('.card'), function (el) {
       el.addEventListener('click', function () { location.hash = '#/' + el.getAttribute('data-id'); });
+    });
+    bindStoreKeyBtn();
+  }
+
+  /* ---------- 공유 저장소 상태 표시 + 비밀번호 입력 ---------- */
+  function sharedStatusHtml() {
+    if (!window.Store || !Store.url()) return '';
+    if (!Store.key())
+      return '<button class="btn sm" id="btn-store-key" type="button">🔑 공유 데이터 보기 (비밀번호)</button>';
+    if (sharedError)
+      return '<span class="small-note" style="color:var(--red)">공유 로드 실패: ' + esc(sharedError) + '</span>' +
+        '<button class="btn sm" id="btn-store-key" type="button">비밀번호 재입력</button>';
+    var n = sharedCompanies ? Object.keys(sharedCompanies).length : 0;
+    return '<span class="small-note">☁ 공유 기업 ' + n + '개</span>';
+  }
+  function bindStoreKeyBtn() {
+    var b = document.getElementById('btn-store-key');
+    if (!b) return;
+    b.addEventListener('click', function () {
+      var k = prompt('공유 비밀번호를 입력하세요 (이 브라우저에 저장됩니다):', Store.key() || '');
+      if (k == null) return;
+      Store.setKey(k);
+      sharedCompanies = null; sharedError = '';
+      route();
     });
   }
 
@@ -401,6 +436,17 @@
   function clamp(v) { return Math.max(0, Math.min(100, v)); }
 
   function route() {
+    // 공유 저장소가 설정돼 있으면 최초 1회 로드 후 렌더
+    if (window.Store && Store.enabled() && sharedCompanies === null) {
+      Store.list()
+        .then(function (obj) { sharedCompanies = obj; })
+        .catch(function (e) { sharedCompanies = {}; sharedError = e.message || String(e); })
+        .then(doRoute);
+      return;
+    }
+    doRoute();
+  }
+  function doRoute() {
     var companies = loadCompanies();
     var hash = location.hash.replace(/^#\/?/, '');
     if (hash) {

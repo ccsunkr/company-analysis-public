@@ -21,7 +21,7 @@
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Cache-Control': 'public, max-age=60'
 };
@@ -104,6 +104,61 @@ async function history(code) {
   return merged.map(x => ({ label: x.label, per: x.per, pbr: x.pbr }));
 }
 
+/* ---------- 공유 저장소 (KV) ----------
+ * 여러 사람이 분석한 기업을 공유. 설정(대시보드 → Worker → Settings):
+ *   1) Bindings → KV Namespace → 변수명 STORE, 네임스페이스 새로 생성(예: company-store)
+ *   2) Variables → STORE_KEY = 팀 공유 비밀번호 (친구들에게만 알려줌)
+ * 요청: ?store=list | save | delete | corpmap  (&key=비밀번호, save/delete/corpmap 쓰기는 POST)
+ */
+async function handleStore(request, url, env) {
+  const kv = env && env.STORE;
+  if (!kv) return json({ error: '공유 저장소 미설정 — 워커에 KV 바인딩(STORE)을 추가하세요 (serverless/README.md).' }, 501);
+  if (!env.STORE_KEY) return json({ error: '공유 비밀번호 미설정 — 워커 환경변수 STORE_KEY를 추가하세요.' }, 501);
+  const given = (url.searchParams.get('key') || '').trim();
+  if (given !== env.STORE_KEY) return json({ error: '공유 비밀번호가 틀립니다.' }, 403);
+
+  const action = url.searchParams.get('store');
+
+  if (action === 'list') {
+    const raw = await kv.get('companies');
+    return json({ companies: raw ? JSON.parse(raw) : {} });
+  }
+  if (action === 'corpmap') {
+    if (request.method === 'POST') {
+      const body = await request.text();
+      if (body.length > 3e6) return json({ error: 'corpmap이 너무 큽니다.' }, 413);
+      JSON.parse(body); // 유효성 검사
+      await kv.put('corpmap', body);
+      return json({ ok: true });
+    }
+    const raw = await kv.get('corpmap');
+    if (!raw) return json({ error: 'corpmap 없음' }, 404);
+    return new Response(raw, { headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS } });
+  }
+  if (action === 'save' && request.method === 'POST') {
+    const c = await request.json();
+    if (!c || typeof c.id !== 'string' || !/^[a-z0-9_-]+$/.test(c.id)) return json({ error: '올바른 기업 id가 필요합니다.' }, 400);
+    const raw = await kv.get('companies');
+    const all = raw ? JSON.parse(raw) : {};
+    c.__savedAt = new Date().toISOString().slice(0, 10);
+    all[c.id] = c;
+    const out = JSON.stringify(all);
+    if (out.length > 20e6) return json({ error: '저장소 용량 초과' }, 413);
+    await kv.put('companies', out);
+    return json({ ok: true, count: Object.keys(all).length });
+  }
+  if (action === 'delete' && request.method === 'POST') {
+    const b = await request.json();
+    if (!b || !b.id) return json({ error: 'id가 필요합니다.' }, 400);
+    const raw = await kv.get('companies');
+    const all = raw ? JSON.parse(raw) : {};
+    delete all[b.id];
+    await kv.put('companies', JSON.stringify(all));
+    return json({ ok: true, count: Object.keys(all).length });
+  }
+  return json({ error: '알 수 없는 store 동작: ' + action }, 400);
+}
+
 /* ---------- OpenDART 중계 ---------- */
 const DART_PATHS = new Set(['corpCode', 'fnlttSinglAcnt', 'fnlttSinglAcntAll', 'stockTotqySttus', 'alotMatter', 'company']);
 
@@ -138,6 +193,12 @@ async function handle(request, env) {
   if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
 
   const url = new URL(request.url);
+
+  // 공유 저장소 요청
+  if (url.searchParams.get('store')) {
+    try { return await handleStore(request, url, env); }
+    catch (e) { return json({ error: String(e && e.message || e) }, 502); }
+  }
 
   // OpenDART 중계 요청
   if (url.searchParams.get('dartPath')) {

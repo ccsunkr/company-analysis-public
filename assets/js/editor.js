@@ -24,16 +24,30 @@
   var state = blankState();
 
   /* ---------- 저장소 접근 ---------- */
+  var sharedCompanies = {};   // 공유 저장소(워커 KV)에서 로드 — init에서 채움
   function baseCompanies() { return (window.COMPANIES || []).slice(); }
   function overrides() { try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (e) { return {}; } }
   function allCompanies() {
     var byId = {};
     baseCompanies().forEach(function (c) { byId[c.id] = c; });
+    Object.keys(sharedCompanies).forEach(function (id) {
+      if (sharedCompanies[id] && sharedCompanies[id].id) byId[id] = sharedCompanies[id];
+    });
     var ov = overrides();
     Object.keys(ov).forEach(function (id) {
       if (ov[id] && ov[id].__deleted) delete byId[id]; else byId[id] = ov[id];
     });
     return Object.keys(byId).map(function (id) { return byId[id]; });
+  }
+  function loadShared(done) {
+    if (!window.Store || !Store.enabled()) { if (done) done(); return; }
+    var st = document.getElementById('store-status');
+    Store.list().then(function (obj) {
+      sharedCompanies = obj || {};
+      if (st) st.innerHTML = '☁ 공유 기업 <b>' + Object.keys(sharedCompanies).length + '개</b> 불러옴.';
+    }).catch(function (e) {
+      if (st) st.innerHTML = '<span style="color:var(--red)">공유 목록 로드 실패: ' + esc(e.message || e) + '</span>';
+    }).then(function () { if (done) done(); });
   }
 
   /* ---------- 초기화 ---------- */
@@ -43,7 +57,14 @@
     bindButtons();
     // URL 해시로 특정 기업 편집 (#samsung)
     var hid = location.hash.replace('#', '');
-    if (hid) { var c = allCompanies().filter(function (x) { return x.id === hid; })[0]; if (c) loadInto(c); else newCompany(); }
+    // 공유 목록을 먼저 불러온 뒤 선택 (해시 기업이 공유본일 수 있음)
+    loadShared(function () {
+      buildSelector();
+      if (hid) { var c = allCompanies().filter(function (x) { return x.id === hid; })[0]; if (c) { loadInto(c); return; } }
+      if (state.id) { document.getElementById('company-select').value = state.id; return; }
+      newCompany();
+    });
+    if (hid) { var c0 = allCompanies().filter(function (x) { return x.id === hid; })[0]; if (c0) loadInto(c0); else newCompany(); }
     else newCompany();
   }
 
@@ -293,6 +314,22 @@
     if (dartApiBtn) dartApiBtn.addEventListener('click', onDartApi);
     autodetectLocalProxy();
     document.getElementById('btn-save').addEventListener('click', saveLocal);
+    var storeUrlInput = document.getElementById('store-url');
+    if (storeUrlInput && window.Store) {
+      storeUrlInput.value = Store.url();
+      storeUrlInput.addEventListener('input', function () { Store.setUrl(storeUrlInput.value); });
+    }
+    var storeKeyInput = document.getElementById('store-key');
+    if (storeKeyInput && window.Store) {
+      storeKeyInput.value = Store.key();
+      storeKeyInput.addEventListener('input', function () { Store.setKey(storeKeyInput.value); });
+    }
+    var bss = document.getElementById('btn-store-save');
+    if (bss) bss.addEventListener('click', saveShared);
+    var bsd = document.getElementById('btn-store-delete');
+    if (bsd) bsd.addEventListener('click', deleteShared);
+    var bsl = document.getElementById('btn-store-load');
+    if (bsl) bsl.addEventListener('click', function () { loadShared(function () { buildSelector(); if (state.id) document.getElementById('company-select').value = state.id; }); });
     document.getElementById('btn-export-one').addEventListener('click', exportOne);
     document.getElementById('btn-export-all').addEventListener('click', exportAllDataJs);
     document.getElementById('btn-delete').addEventListener('click', deleteLocal);
@@ -314,6 +351,50 @@
     buildSelector();
     document.getElementById('company-select').value = state.id;
     toast('로컬에 저장되었습니다. 목록 페이지에서 확인할 수 있어요. (영구 공개하려면 아래 "data.js 내보내기" → 저장소 커밋)');
+  }
+
+  /* ---------- 공유 저장소 (워커 KV — 친구들과 실시간 공유) ---------- */
+  function storeReady() {
+    if (!window.Store) return '스크립트 로드 오류';
+    if (!Store.url()) return '공유 서버 URL을 입력하세요 (워커 주소 — 아래 공유 설정 칸)';
+    if (!Store.key()) return '공유 비밀번호를 입력하세요 (아래 공유 설정 칸)';
+    return null;
+  }
+
+  function saveShared() {
+    if (!validateId()) return;
+    var st = document.getElementById('store-status');
+    var why = storeReady();
+    if (why) { st.innerHTML = '<span style="color:var(--red)">' + esc(why) + '</span>'; return; }
+    var c = collect();
+    var btn = document.getElementById('btn-store-save');
+    btn.disabled = true; st.textContent = '공유 저장 중…';
+    Store.save(c).then(function (j) {
+      // 공유본이 목록에 그대로 반영되므로, 같은 내용의 로컬 사본은 제거(그림자 방지)
+      var ov = overrides();
+      if (ov[c.id] && !ov[c.id].__deleted) { delete ov[c.id]; localStorage.setItem(LS_KEY, JSON.stringify(ov)); }
+      sharedCompanies[c.id] = c;
+      buildSelector(); document.getElementById('company-select').value = c.id;
+      st.innerHTML = '☁ <b>' + esc(c.name) + '</b> 공유 저장 완료 — 친구들 화면에도 바로 반영됩니다. (공유 기업 ' + (j.count != null ? j.count : Object.keys(sharedCompanies).length) + '개)';
+      toast('공유 저장 완료. 모두의 목록에 반영되었습니다.');
+    }).catch(function (e) {
+      st.innerHTML = '<span style="color:var(--red)">공유 저장 실패: ' + esc(e.message || e) + '</span>';
+    }).finally(function () { btn.disabled = false; });
+  }
+
+  function deleteShared() {
+    if (!state.id) return;
+    var st = document.getElementById('store-status');
+    var why = storeReady();
+    if (why) { st.innerHTML = '<span style="color:var(--red)">' + esc(why) + '</span>'; return; }
+    if (!confirm('"' + state.name + '"을(를) 공유 저장소에서 삭제할까요? (모두의 목록에서 사라집니다)')) return;
+    Store.remove(state.id).then(function (j) {
+      delete sharedCompanies[state.id];
+      buildSelector();
+      st.innerHTML = '공유 저장소에서 삭제했습니다. (남은 공유 기업 ' + (j.count != null ? j.count : Object.keys(sharedCompanies).length) + '개)';
+    }).catch(function (e) {
+      st.innerHTML = '<span style="color:var(--red)">공유 삭제 실패: ' + esc(e.message || e) + '</span>';
+    });
   }
 
   function deleteLocal() {
@@ -811,7 +892,14 @@
   //  1순위: 사용자가 배포한 서버리스 워커(안정적) — localStorage에 URL 저장
   //  2순위: 공개 CORS 프록시(불안정) → 실패 시 수동 입력 폴백
   var PROXY_KEY = 'companyAnalysis.naverProxy';
-  function getProxyUrl() { try { return (localStorage.getItem(PROXY_KEY) || '').trim(); } catch (e) { return ''; } }
+  function getProxyUrl() {
+    try {
+      var u = (localStorage.getItem(PROXY_KEY) || '').trim();
+      // 미설정 시 공유 서버(워커)를 프록시로 사용 — 친구는 별도 설정 없이 네이버·DART 조회 가능
+      if (!u && window.SITE_CONFIG && SITE_CONFIG.sharedUrl) u = SITE_CONFIG.sharedUrl.trim();
+      return u;
+    } catch (e) { return ''; }
+  }
   function setProxyUrl(u) { try { localStorage.setItem(PROXY_KEY, (u || '').trim()); } catch (e) {} }
 
   function fetchWithTimeout(url, ms) {
