@@ -81,42 +81,93 @@
     // 요약 이후 전체(body)에서 라벨+숫자 패턴을 직접 매칭한다.
     var body = txt.slice(anchor);
 
+    // --- 표 단위 자동 감지 ---
+    // 보고서 표마다 '(단위 : 원 | 천원 | 백만원 | 억원 | 십억원)' 표기가 제각각이라,
+    // 표기 위치를 모두 수집해 두고 각 값이 매칭된 위치의 '직전 단위'로 백만원 기준 환산한다.
+    var unitMarks = [];
+    (function () {
+      var re = /단\s*위\s*[::]\s*\(?\s*(십\s*억\s*원|백\s*만\s*원|천\s*원|억\s*원|원)/g, m;
+      while ((m = re.exec(body))) {
+        var u = m[1].replace(/\s+/g, '');
+        var f = { '원': 1e-6, '천원': 1e-3, '백만원': 1, '억원': 100, '십억원': 1000 }[u];
+        if (f != null) unitMarks.push({ pos: m.index, f: f });
+      }
+    })();
+    if (!unitMarks.length) res.warnings.push('표 단위 표기를 찾지 못해 백만원으로 가정');
+    function unitAt(pos) {
+      var f = 1; // 표기가 없으면 백만원 가정
+      for (var i = 0; i < unitMarks.length; i++) { if (unitMarks[i].pos < pos) f = unitMarks[i].f; else break; }
+      return f;
+    }
+
     // 손익계산서 행: 라벨 뒤 숫자 4개 = [당기3개월, 당기누적, 전기3개월, 전기누적]
-    // 요약(숫자 3개)이 아닌 손익계산서(숫자 4개) 행을 정확히 집는다.
+    // 요약(숫자 3개)이 아닌 손익계산서(숫자 4개) 행을 정확히 집는다. (→백만원 환산)
     function incRow(label) {
       var n = '(△?\\(?-?[\\d,]{2,}\\)?)';
       var re = new RegExp(labelRe(label) + '\\s*' + n + '\\s+' + n + '\\s+' + n + '\\s+' + n);
       var m = re.exec(body);
-      return m ? [toNum(m[1]), toNum(m[2]), toNum(m[3]), toNum(m[4])] : [];
+      if (!m) return [];
+      var f = unitAt(m.index);
+      return [toNum(m[1]), toNum(m[2]), toNum(m[3]), toNum(m[4])].map(function (v) { return v == null ? null : v * f; });
     }
-    // 연간(사업)보고서 행: 라벨 뒤 숫자 3개 = [당기, 전기, 전전기] (연간값)
+    // 연간(사업)보고서 행: 라벨 뒤 숫자 3개 = [당기, 전기, 전전기] (연간값, →백만원 환산)
     function annRow(label) {
       var n = '(△?\\(?-?[\\d,]{2,}\\)?)';
       var re = new RegExp(labelRe(label) + '\\s*' + n + '\\s+' + n + '\\s+' + n);
       var m = re.exec(body);
-      return m ? [toNum(m[1]), toNum(m[2]), toNum(m[3])] : [];
+      if (!m) return [];
+      var f = unitAt(m.index);
+      return [toNum(m[1]), toNum(m[2]), toNum(m[3])].map(function (v) { return v == null ? null : v * f; });
+    }
+    // after/afterAny/afterFloor의 단위 환산판
+    function afterU(label, span) {
+      var re = new RegExp(labelRe(label), 'g'), m;
+      while ((m = re.exec(body))) {
+        var seg = body.slice(m.index + m[0].length, m.index + m[0].length + (span || 60));
+        var nm = seg.match(/△?\(?-?[\d,]{2,}\)?/);
+        if (nm) { var v = toNum(nm[0]); if (v != null) return v * unitAt(m.index); }
+      }
+      return null;
+    }
+    function afterAnyU(labels, span) {
+      for (var i = 0; i < labels.length; i++) { var v = afterU(labels[i], span); if (v != null) return v; }
+      return null;
+    }
+    function afterFloorU(labels, floor, span) { // floor는 백만원 기준
+      for (var i = 0; i < labels.length; i++) {
+        var re = new RegExp(labelRe(labels[i]), 'g'), m;
+        while ((m = re.exec(body))) {
+          var seg = body.slice(m.index + m[0].length, m.index + m[0].length + (span || 60));
+          var nm = seg.match(/△?\(?-?[\d,]{2,}\)?/);
+          if (nm) {
+            var v = toNum(nm[0]);
+            if (v != null) { var mv = v * unitAt(m.index); if (Math.abs(mv) >= (floor || 0)) return mv; }
+          }
+        }
+      }
+      return null;
     }
 
     var r = {};
     var rev = incRow('매출액'), cogs = incRow('매출원가'), sga = incRow('판매비와관리비'),
         op = incRow('영업이익'), ni = incRow('분기순이익');
-    r.revenue = rev[0] != null ? rev[0] : after(body, '매출액');   // 3개월(분기) 실적
+    r.revenue = rev[0] != null ? rev[0] : afterU('매출액');   // 3개월(분기) 실적
     r.cogs = cogs[0] != null ? cogs[0] : null;
     r.sga = sga[0] != null ? sga[0] : null;
-    r.op = op[0] != null ? op[0] : after(body, '영업이익');
-    r.netIncome = ni[0] != null ? ni[0] : (after(body, '연결총당기순이익') || after(body, '당기순이익'));
-    r.eps = after(body, '기본주당순이익');   // 요약의 주당순이익
+    r.op = op[0] != null ? op[0] : afterU('영업이익');
+    r.netIncome = ni[0] != null ? ni[0] : (afterU('연결총당기순이익') || afterU('당기순이익'));
+    r.eps = after(body, '기본주당순이익');   // 주당순이익은 원/주 단위 그대로 (환산 금지)
 
     // 재무상태표 항목 — 매출액의 0.5%를 하한(floor)으로, 주석의 작은 오탐값을 건너뛰고 본표값 채택.
     var bsFloor = Math.abs(r.revenue || 0) * 0.005;
-    r.receivables = afterFloor(body, ['매출채권및기타채권', '매출채권'], bsFloor);
-    r.inventory = afterFloor(body, ['재고자산'], bsFloor);
-    r.equity = afterFloor(body, ['자본총계', '자본 총계'], bsFloor);
+    r.receivables = afterFloorU(['매출채권및기타채권', '매출채권'], bsFloor);
+    r.inventory = afterFloorU(['재고자산'], bsFloor);
+    r.equity = afterFloorU(['자본총계', '자본 총계'], bsFloor);
 
     // 현금흐름표(첫 출현) — OCF/CAPEX
-    r.ocf = afterAny(body, ['영업활동현금흐름', '영업활동으로 인한 현금흐름', '영업활동으로인한현금흐름']);
-    var capexT = Math.abs(after(body, '유형자산의 취득') || 0);
-    var capexI = Math.abs(after(body, '무형자산의 취득') || 0);
+    r.ocf = afterAnyU(['영업활동현금흐름', '영업활동으로 인한 현금흐름', '영업활동으로인한현금흐름']);
+    var capexT = Math.abs(afterU('유형자산의 취득') || 0);
+    var capexI = Math.abs(afterU('무형자산의 취득') || 0);
     r.capex = (capexT + capexI) || null;
 
     res.reported = r;
