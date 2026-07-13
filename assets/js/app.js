@@ -14,15 +14,49 @@
     var vp = viewerPresets(); vp[id] = key;
     try { localStorage.setItem(PRESET_LS, JSON.stringify(vp)); } catch (e) {}
   }
-  // 뷰어가 선택한 프리셋을 반영한 회사 사본 (원본 data.js는 건드리지 않음)
+  /* ---------- 실시간 시세 (워커 경유 네이버 · 5분 캐시) ---------- */
+  var PRICE_TTL = 5 * 60 * 1000;
+  var livePrices = {}; // ticker → { price, ts }
+  try { livePrices = JSON.parse(sessionStorage.getItem('companyAnalysis.livePrices') || '{}'); } catch (e) {}
+  function priceBase() { return (window.Store && Store.url()) || ''; }
+  function livePriceOf(ticker) {
+    var e = livePrices[ticker];
+    return (e && (Date.now() - e.ts) < PRICE_TTL) ? e : null;
+  }
+  // 화면에 필요한 종목의 현재가를 병렬 조회. 새로 받아온 게 있으면 true.
+  function fetchLivePrices(companies) {
+    var base = priceBase();
+    if (!base) return Promise.resolve(false);
+    var need = [];
+    companies.forEach(function (c) {
+      var t = (c.ticker || '').trim();
+      if (/^\d{6}$/.test(t) && !livePriceOf(t) && need.indexOf(t) < 0) need.push(t);
+    });
+    if (!need.length) return Promise.resolve(false);
+    return Promise.all(need.map(function (t) {
+      return fetch(base + '?code=' + t)
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.price != null) livePrices[t] = { price: j.price, ts: Date.now() }; })
+        .catch(function () {});
+    })).then(function () {
+      try { sessionStorage.setItem('companyAnalysis.livePrices', JSON.stringify(livePrices)); } catch (e) {}
+      return true;
+    });
+  }
+  function hhmm(ts) { var d = new Date(ts); function p(n) { return (n < 10 ? '0' : '') + n; } return p(d.getHours()) + ':' + p(d.getMinutes()); }
+
+  // 뷰어 프리셋·실시간 시세를 반영한 회사 사본 (원본 data.js는 건드리지 않음)
   function effectiveCompany(c) {
     var key = viewerPresets()[c.id];
-    if (!key) return c;
+    var lp = livePriceOf((c.ticker || '').trim());
+    if (!key && !lp) return c;
     var v2 = {}; Object.keys(c.valuation || {}).forEach(function (k) { v2[k] = c.valuation[k]; });
     if (key === 'default') delete v2.weights;
-    else if (V.WEIGHT_PRESETS[key]) v2.weights = V.WEIGHT_PRESETS[key];
+    else if (key && V.WEIGHT_PRESETS[key]) v2.weights = V.WEIGHT_PRESETS[key];
+    if (lp) v2.price = lp.price;
     var c2 = {}; Object.keys(c).forEach(function (k) { c2[k] = c[k]; });
     c2.valuation = v2;
+    if (lp) c2.__livePrice = lp;
     return c2;
   }
   function activePresetKey(c) {
@@ -103,7 +137,8 @@
       return '<span class="small-note" style="color:var(--red)">공유 로드 실패: ' + esc(sharedError) + '</span>' +
         '<button class="btn sm" id="btn-store-key" type="button">비밀번호 재입력</button>';
     var n = sharedCompanies ? Object.keys(sharedCompanies).length : 0;
-    return '<span class="small-note">☁ 공유 기업 ' + n + '개</span>';
+    var live = Object.keys(livePrices).length ? ' · 📈 실시간 시세 반영(5분 캐시)' : '';
+    return '<span class="small-note">☁ 공유 기업 ' + n + '개' + live + '</span>';
   }
   function bindStoreKeyBtn() {
     var b = document.getElementById('btn-store-key');
@@ -127,7 +162,9 @@
   function renderDetail(company) {
     var app = document.getElementById('app');
     var u = company.unit || '조원';
-    var val = V.computeValuation(effectiveCompany(company));
+    var eff = effectiveCompany(company);
+    var val = V.computeValuation(eff);
+    val.livePrice = eff.__livePrice || null;
     var t = val.trends || {};
 
     app.innerHTML =
@@ -270,7 +307,8 @@
           (val.upside != null ? '<div class="upside ' + upCls + '">' + fmt.signedPct(val.upside) + '</div><small>적정주가 대비 상승여력</small>'
             : '<div class="upside" style="font-size:20px">' + fmt.x(val.per) + '</div><small>현재 PER (밴드 대비 위치로 판단)</small>') + '</div>' +
         '<div class="metric-grid">' +
-          metric('현재 주가', fmt.price(val.price)) +
+          metric('현재 주가', fmt.price(val.price),
+                 val.livePrice ? '📈 실시간 시세 (' + hhmm(val.livePrice.ts) + ' 조회)' : '저장 시점 값 — 시세 서버 미연결') +
           metric('적정주가(밴드)', val.fairLow != null ? fmt.price(val.fairLow) + ' ~ ' + fmt.price(val.fairHigh) : '–',
                  (val.fairAvg != null ? '가중평균 ' + fmt.price(val.fairAvg) : '') + (anchorSub.length ? ' · ' + anchorSub.join(' · ') : '')) +
           metric('현재 PER', fmt.x(val.per), val.targetPer != null ? '목표/중앙 ' + fmt.x(val.targetPer) : '') +
@@ -449,11 +487,16 @@
   function doRoute() {
     var companies = loadCompanies();
     var hash = location.hash.replace(/^#\/?/, '');
-    if (hash) {
-      var c = companies.filter(function (x) { return x.id === hash; })[0];
-      if (c) { renderDetail(c); return; }
-    }
-    renderGallery(companies);
+    var target = null;
+    if (hash) target = companies.filter(function (x) { return x.id === hash; })[0];
+    if (target) renderDetail(target); else renderGallery(companies);
+    // 실시간 시세 조회 후 1회 재렌더 (5분 내 캐시가 다 있으면 아무것도 안 함)
+    fetchLivePrices(target ? [target] : companies).then(function (updated) {
+      if (!updated) return;
+      var y = window.scrollY;
+      if (target) renderDetail(target); else renderGallery(loadCompanies());
+      window.scrollTo(0, y);
+    });
   }
   window.addEventListener('hashchange', route);
   document.addEventListener('DOMContentLoaded', route);
