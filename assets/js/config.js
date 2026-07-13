@@ -8,5 +8,5 @@
  *   (워커에 KV(STORE)·비밀번호(STORE_KEY) 설정 필요 — serverless/README.md 참고)
  * =========================================================================== */
 window.SITE_CONFIG = {
-  sharedUrl: ''
+  sharedUrl: 'https://falling-math-382.ccsunkr.workers.dev'
 };
