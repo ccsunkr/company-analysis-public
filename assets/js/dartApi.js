@@ -208,7 +208,7 @@
     var wantFs = statement === '별도' ? 'OFS' : 'CFS';
     var cum = {};       // 연도 → 계정 → {분기: 누적값}
     var quarters = {};  // 'y-q' → {y, q, revenue, op, netIncome}
-    var equity = null, equityAt = -1, fsUsed = null, latest = null;
+    var equity = null, equityAt = -1, debt = null, debtAt = -1, fsUsed = null, latest = null;
 
     results.sort(function (a, b) { return (a.y * 10 + a.q) - (b.y * 10 + b.q); });
 
@@ -223,10 +223,15 @@
 
       rows.forEach(function (r) {
         var nm = String(r.account_nm || '').replace(/\s+/g, '');
-        // 자본총계 (재무상태표, 기말 잔액) — 가장 최근 보고서 값 사용
+        // 자본총계·부채총계 (재무상태표, 기말 잔액) — 가장 최근 보고서 값 사용
         if (nm === '자본총계' && (!r.sj_div || r.sj_div === 'BS')) {
           var ev = num(r.thstrm_amount);
           if (ev != null && at > equityAt) { equity = ev; equityAt = at; }
+          return;
+        }
+        if (nm === '부채총계' && (!r.sj_div || r.sj_div === 'BS')) {
+          var dv = num(r.thstrm_amount);
+          if (dv != null && at > debtAt) { debt = dv; debtAt = at; }
           return;
         }
         Object.keys(ACC).forEach(function (key) {
@@ -265,7 +270,7 @@
 
     var list = Object.keys(quarters).map(function (k) { return quarters[k]; })
       .sort(function (a, b) { return (a.y * 10 + a.q) - (b.y * 10 + b.q); });
-    return { quarters: list, equity: equity, fsUsed: fsUsed, latest: latest };
+    return { quarters: list, equity: equity, debt: debt, fsUsed: fsUsed, latest: latest };
   }
 
   /* ==========================================================================
@@ -350,7 +355,7 @@
           return fetchDividends(cfg, ent.c, results, onStatus).then(function (dividend) {
             return {
               corpCode: ent.c, corpName: ent.n,
-              quarters: fin.quarters, equity: fin.equity,
+              quarters: fin.quarters, equity: fin.equity, debt: fin.debt,
               shares: shares, fsUsed: fin.fsUsed, latest: fin.latest,
               dividend: dividend
             };

@@ -18,6 +18,7 @@
       valuation: { price: null, shares: null, netIncomeTTM: null, equity: null,
         perBand: { low: null, avg: null, high: null }, pbrBand: { low: null, avg: null, high: null },
         targetPer: null, targetPbr: null, isExample: false },
+      principles: { pq: '', catalysts: [], quality: false, chart: false },
       commentary: []
     };
   }
@@ -96,13 +97,15 @@
     state.valuationHistory = state.valuationHistory || [];
     state.buybacks = state.buybacks || [];
     state.commentary = state.commentary || [];
+    state.principles = state.principles || { pq: '', catalysts: [], quality: false, chart: false };
+    state.principles.catalysts = state.principles.catalysts || [];
     document.getElementById('company-select').value = c.id;
     syncFormFromState();
   }
 
   /* ---------- 폼 ↔ 상태 동기화 ---------- */
   var textFields = ['id', 'name', 'ticker', 'market', 'sector', 'statement', 'updated', 'unit', 'buybackUnit'];
-  var valFields = ['price', 'shares', 'netIncomeTTM', 'equity', 'targetPer', 'targetPbr', 'epsGrowth', 'dps', 'targetDivYield'];
+  var valFields = ['price', 'shares', 'netIncomeTTM', 'equity', 'targetPer', 'targetPbr', 'epsGrowth', 'dps', 'targetDivYield', 'forwardNI', 'debt'];
   var bandFields = [['perBand', 'low'], ['perBand', 'avg'], ['perBand', 'high'],
                     ['pbrBand', 'low'], ['pbrBand', 'avg'], ['pbrBand', 'high']];
 
@@ -148,11 +151,46 @@
     document.getElementById('v-isExample').checked = !!state.valuation.isExample;
     var wp = document.getElementById('v-weightPreset');
     if (wp) wp.value = presetKeyOf(state.valuation.weights);
+    var pr = state.principles || {};
+    var pq = document.getElementById('pr-pq'); if (pq) pq.value = pr.pq || '';
+    var q2 = document.getElementById('pr-quality'); if (q2) q2.checked = !!pr.quality;
+    var q7 = document.getElementById('pr-chart'); if (q7) q7.checked = !!pr.chart;
     renderQuarterTable();
     renderValHistory();
     renderBuybacks();
+    renderCatalysts();
     renderCommentary();
     refresh();
+  }
+
+  /* ---------- 촉매 (숫자×촉매의 촉매 축) ---------- */
+  function renderCatalysts() {
+    var tb = document.getElementById('cat-body'); if (!tb) return;
+    var cats = (state.principles && state.principles.catalysts) || [];
+    tb.innerHTML = cats.map(function (c, i) {
+      function sel(key, opts, cur) {
+        return '<td><select data-cati="' + i + '" data-catk="' + key + '">' +
+          opts.map(function (o) { return '<option' + (o === cur ? ' selected' : '') + '>' + o + '</option>'; }).join('') + '</select></td>';
+      }
+      return '<tr>' +
+        '<td><input data-cati="' + i + '" data-catk="text" type="text" value="' + escAttr(c.text || '') + '" placeholder="예: 2026 2Q 신공장 가동 → 연매출 +300억"></td>' +
+        '<td><input data-cati="' + i + '" data-catk="due" type="text" value="' + escAttr(c.due || '') + '" placeholder="2026-12" style="max-width:90px"></td>' +
+        sel('grade', ['Fact/A', 'Fact/B', '추정', '판단'], c.grade || '추정') +
+        sel('status', ['유효', '훼손', '실현'], c.status || '유효') +
+        '<td class="rm"><button class="icon-btn" data-catrm="' + i + '">×</button></td></tr>';
+    }).join('');
+    Array.prototype.forEach.call(tb.querySelectorAll('[data-cati]'), function (inp) {
+      var ev = inp.tagName === 'SELECT' ? 'change' : 'input';
+      inp.addEventListener(ev, function () {
+        state.principles.catalysts[+inp.getAttribute('data-cati')][inp.getAttribute('data-catk')] = inp.value;
+        refresh();
+      });
+    });
+    Array.prototype.forEach.call(tb.querySelectorAll('[data-catrm]'), function (btn) {
+      btn.addEventListener('click', function () {
+        state.principles.catalysts.splice(+btn.getAttribute('data-catrm'), 1); renderCatalysts(); refresh();
+      });
+    });
   }
 
   /* ---------- 밸류에이션 히스토리 (역사적 PER/PBR → 밴드) ---------- */
@@ -295,6 +333,16 @@
     document.getElementById('btn-addc').addEventListener('click', function () {
       state.commentary.push({ title: '', body: '' }); renderCommentary();
     });
+    var addCat = document.getElementById('btn-addcat');
+    if (addCat) addCat.addEventListener('click', function () {
+      state.principles.catalysts.push({ text: '', due: '', grade: '추정', status: '유효' }); renderCatalysts();
+    });
+    var prPq = document.getElementById('pr-pq');
+    if (prPq) prPq.addEventListener('change', function () { state.principles.pq = prPq.value; refresh(); });
+    var prQ = document.getElementById('pr-quality');
+    if (prQ) prQ.addEventListener('change', function () { state.principles.quality = prQ.checked; refresh(); });
+    var prC = document.getElementById('pr-chart');
+    if (prC) prC.addEventListener('change', function () { state.principles.chart = prC.checked; refresh(); });
     document.getElementById('btn-vh-naver').addEventListener('click', onVhNaver);
     document.getElementById('vh-csv').addEventListener('change', onVhCsv);
     document.getElementById('dart-file').addEventListener('change', onDartFile);
@@ -462,11 +510,23 @@
     };
     if (!c.valuationHistory.length) delete c.valuationHistory;
     if (!c.buybacks.length) { delete c.buybacks; delete c.buybackUnit; }
+    // 투자 원칙 체크 (촉매·P/Q·수기 확인)
+    var pr = state.principles || {};
+    var cats = (pr.catalysts || []).filter(function (x) { return x.text; }).map(function (x) {
+      return { text: x.text.trim(), due: (x.due || '').trim(), grade: x.grade || '추정', status: x.status || '유효' };
+    });
+    if (pr.pq || cats.length || pr.quality || pr.chart) {
+      c.principles = {};
+      if (pr.pq) c.principles.pq = pr.pq;
+      if (cats.length) c.principles.catalysts = cats;
+      if (pr.quality) c.principles.quality = true;
+      if (pr.chart) c.principles.chart = true;
+    }
     return c;
   }
   function cleanVal(v) {
     var o = {};
-    ['price', 'shares', 'netIncomeTTM', 'equity', 'targetPer', 'targetPbr', 'epsGrowth', 'dps', 'targetDivYield'].forEach(function (k) {
+    ['price', 'shares', 'netIncomeTTM', 'equity', 'targetPer', 'targetPbr', 'epsGrowth', 'dps', 'targetDivYield', 'forwardNI', 'debt'].forEach(function (k) {
       if (numOrNull(v[k]) != null) o[k] = numOrNull(v[k]);
     });
     ['perBand', 'pbrBand'].forEach(function (b) {
@@ -839,6 +899,7 @@
         });
       });
       if (res.equity != null) state.valuation.equity = wonToUnit(res.equity, unit);
+      if (res.debt != null) state.valuation.debt = wonToUnit(res.debt, unit);
       if (res.shares != null) state.valuation.shares = res.shares;
       if (res.dividend && res.dividend.dps != null) {
         state.valuation.dps = res.dividend.dps; // 원/주 그대로 (단위 환산 없음)

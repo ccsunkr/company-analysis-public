@@ -21,7 +21,16 @@
  *      epsGrowth,      // 예상 EPS 성장률(%) — PEG용. 미입력 시 연간 순이익 CAGR로 자동
  *      dps,            // 주당배당금(원, 연간) — 배당 기준 적정주가·배당수익률용
  *      targetDivYield, // 목표 배당수익률(%) — 배당 기준 적정주가 = dps ÷ (이 값/100)
+ *      forwardNI,      // 내년 예상 순이익(재무 단위) — 포워드 PER·밸류 3좌표용
+ *      debt,           // 부채총계(재무 단위) — 부채비율용 (OpenDART 자동)
  *      isExample       // true면 '예시값' 배지 표시
+ *    },
+ *    principles: {                                      // 투자 원칙 체크 (선택)
+ *      pq: 'P'|'Q',                                     //   P/Q 사이클 유형
+ *      catalysts: [ { text, due:'YYYY-MM',              //   촉매 (6~12개월 시한)
+ *                     grade:'Fact/A'|'Fact/B'|'추정'|'판단', status:'유효'|'훼손'|'실현' } ],
+ *      quality: true,                                   //   ②이익의 질 수기 확인
+ *      chart: true                                      //   ⑦주봉 바닥권 수기 확인
  *    },
  *
  *  적정주가 = 가중 평균(PBR 0.5 · 배당 0.3 · PER 0.2, 없는 앵커는 재배분) — 12개월 관점.

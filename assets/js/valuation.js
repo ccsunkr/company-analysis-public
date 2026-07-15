@@ -6,7 +6,10 @@
 (function (global) {
   'use strict';
 
-  var UNIT_TO_WON = 1e12; // '조원' → '원' (Samsung 등 조원 단위 기업의 EPS 계산용)
+  // 재무 단위 → 원 환산계수 (EPS·BPS·PER 계산용 — 기업별 단위를 따라감)
+  function unitToWon(unit) {
+    return { '조원': 1e12, '억원': 1e8, '백만원': 1e6, '천원': 1e3 }[unit] || 1e12;
+  }
 
   function num(x) { return (typeof x === 'number' && isFinite(x)) ? x : null; }
   function yearOf(label) { var m = String(label || '').match(/(\d{2,4})/); return m ? m[1] : null; }
@@ -217,15 +220,16 @@
     var eq = num(v.equity);
     r.price = price; r.shares = shares; r.netIncomeTTM = ni; r.equity = eq;
 
+    var U = unitToWon(company.unit); // 재무 단위(조원·억원·백만원·천원) → 원
     if (shares != null && price != null) r.marketCap = price * shares;
-    r.eps = (ni != null && shares) ? (ni * UNIT_TO_WON) / shares : null;
-    r.bps = (eq != null && shares) ? (eq * UNIT_TO_WON) / shares : null;
+    r.eps = (ni != null && shares) ? (ni * U) / shares : null;
+    r.bps = (eq != null && shares) ? (eq * U) / shares : null;
 
     // 현재 PER/PBR
     if (price != null) {
-      if (ni != null && ni > 0 && r.marketCap != null) r.per = r.marketCap / (ni * UNIT_TO_WON);
+      if (ni != null && ni > 0 && r.marketCap != null) r.per = r.marketCap / (ni * U);
       else if (r.eps) r.per = price / r.eps;
-      if (eq != null && eq > 0 && r.marketCap != null) r.pbr = r.marketCap / (eq * UNIT_TO_WON);
+      if (eq != null && eq > 0 && r.marketCap != null) r.pbr = r.marketCap / (eq * U);
       else if (r.bps) r.pbr = price / r.bps;
     }
     // 현재 PER을 못 구하면 역사적 최신값으로 대체(위치 판단용)
@@ -341,6 +345,145 @@
     return { key: 'fair', label: '적정', desc: '기업가치와 주가가 대체로 부합' };
   }
 
+  /* ==========================================================================
+   * 투자 원칙 체크 — 숫자×촉매 · 3대 스크리닝 · 7대 필터 · 포워드PER · 밸류 3좌표
+   *   company.principles: { pq:'P'|'Q'|'', catalysts:[{text,due,grade,status}],
+   *                         quality:bool(②이익의 질), chart:bool(⑦주봉 바닥권) }
+   *   valuation.forwardNI(내년 예상 순이익, 재무 단위) · valuation.debt(부채총계)
+   * ========================================================================== */
+  function qParse(qs) {
+    return (qs || []).map(function (x) {
+      return { label: x.label, y: Number(fullYear(x.label)), qn: quarterNo(x.label),
+        revenue: num(x.revenue), op: num(x.op), ocf: num(x.ocf),
+        inventory: num(x.inventory), receivables: num(x.receivables) };
+    });
+  }
+  function yoyPrevOf(list, i, key) { // i번째 분기의 전년 동분기 값
+    var t = list[i];
+    if (!t.y || !t.qn) return null;
+    for (var j = 0; j < list.length; j++)
+      if (list[j].y === t.y - 1 && list[j].qn === t.qn && list[j][key] != null) return list[j][key];
+    return null;
+  }
+  function marginImproving(list) { // OPM 최근 4분기 vs 직전 4분기
+    var w = list.filter(function (x) { return x.revenue != null && x.op != null; });
+    if (w.length < 8) return null;
+    function opm(arr) { var R = 0, O = 0; arr.forEach(function (x) { R += x.revenue; O += x.op; }); return R ? O / R : null; }
+    var a = opm(w.slice(-4)), b = opm(w.slice(-8, -4));
+    return (a != null && b != null) ? a > b : null;
+  }
+
+  // peers: 같은 업종 등록 종목들의 (포워드)PER 배열 — 원칙 "같은 업종끼리만, 내 종목 사이에서만 비교"
+  function computePrinciples(company, val, peers) {
+    var v = company.valuation || {};
+    var p = company.principles || {};
+    var list = qParse(company.quarters);
+    var r = { pq: p.pq || '', alerts: [] };
+
+    // ---- 3대 스크리닝: 매출↑ + 이익↑ + 흑자 (최근 데이터 분기, 전년 동분기 대비) ----
+    var li = -1;
+    for (var i = list.length - 1; i >= 0; i--) if (list[i].revenue != null && list[i].op != null) { li = i; break; }
+    if (li >= 0) {
+      var cur = list[li];
+      var pRev = yoyPrevOf(list, li, 'revenue'), pOp = yoyPrevOf(list, li, 'op');
+      r.latestLabel = cur.label;
+      r.screen = {
+        rev: pRev != null ? cur.revenue > pRev : null,
+        revYoY: (pRev != null && pRev > 0) ? cur.revenue / pRev - 1 : null,
+        op: pOp != null ? cur.op > pOp : null,
+        opYoY: (pOp != null && pOp > 0) ? cur.op / pOp - 1 : null,
+        profit: cur.op > 0
+      };
+      r.screen.pass = r.screen.rev === true && r.screen.op === true && r.screen.profit;
+      // QoQ (최근 흐름)
+      var pq2 = null;
+      for (var k = li - 1; k >= 0; k--) if (list[k].revenue != null) { pq2 = list[k]; break; }
+      if (pq2 && pq2.revenue > 0) r.revQoQ = cur.revenue / pq2.revenue - 1;
+      if (pq2 && pq2.op != null && pq2.op > 0 && cur.op != null) r.opQoQ = cur.op / pq2.op - 1;
+      // 위험 신호: 재고·매출채권이 매출보다 빨리 증가 (YoY)
+      if (r.screen.revYoY != null) {
+        var inv = cur.inventory, invP = yoyPrevOf(list, li, 'inventory');
+        if (inv != null && invP != null && invP > 0 && (inv / invP - 1) > r.screen.revYoY)
+          r.alerts.push('⚠ 재고자산 증가율 > 매출 증가율 (YoY)');
+        var ar = cur.receivables, arP = yoyPrevOf(list, li, 'receivables');
+        if (ar != null && arP != null && arP > 0 && (ar / arP - 1) > r.screen.revYoY)
+          r.alerts.push('⚠ 매출채권 증가율 > 매출 증가율 (YoY)');
+      }
+      // ① 실적 지속성: 영업이익 YoY 개선 연속 분기 수
+      var streak = 0;
+      for (var s = li; s >= 0; s--) {
+        var pv = yoyPrevOf(list, s, 'op');
+        if (list[s].op != null && pv != null && list[s].op > pv) streak++; else break;
+      }
+      r.opStreak = streak;
+    }
+
+    // ---- 촉매 (6~12개월 시한, 시한 경과 시 만료) ----
+    var now = new Date(), ymNow = now.getFullYear() * 100 + (now.getMonth() + 1);
+    r.catalysts = (p.catalysts || []).filter(function (c) { return c && c.text; }).map(function (c) {
+      var m = String(c.due || '').match(/(\d{4})[.\-\/]?\s*(\d{1,2})/);
+      var ym = m ? (+m[1]) * 100 + (+m[2]) : null;
+      return { text: c.text, due: c.due || '', grade: c.grade || '추정', status: c.status || '유효',
+               expired: ym != null && ym < ymNow };
+    });
+    r.catalystOK = r.catalysts.some(function (c) { return c.status === '유효' && !c.expired; });
+
+    // ---- 숫자 × 촉매 (곱셈 — 하나라도 0이면 안 움직임) ----
+    r.numbersOK = !!(r.screen && r.screen.pass);
+    r.signal = r.numbersOK && r.catalystOK ? 'go'
+      : (r.numbersOK ? 'numbersOnly' : (r.catalystOK ? 'catalystOnly' : 'none'));
+
+    // ---- 포워드 PER · 밸류 3좌표(저10·중20·고60) ----
+    var U = unitToWon(company.unit);
+    var fni = num(v.forwardNI);
+    if (fni != null && fni > 0 && val.marketCap != null) r.forwardPer = val.marketCap / (fni * U);
+    r.zonePer = r.forwardPer != null ? r.forwardPer : val.per; // 포워드 우선, 없으면 현재
+    r.zoneIsForward = r.forwardPer != null;
+    if (r.zonePer != null && r.zonePer > 0) {
+      r.zone = r.zonePer <= 10 ? '저' : (r.zonePer <= 20 ? '저→중 (재평가 목표 구간)' : (r.zonePer <= 35 ? '중 — 분할매도 검토' : '고'));
+    }
+
+    // ---- 부채비율 · OCF ----
+    var debt = num(v.debt);
+    if (debt != null && val.equity != null && val.equity > 0) r.debtRatio = debt / val.equity * 100;
+    var ocfs = list.filter(function (x) { return x.ocf != null; }).slice(-4);
+    r.ocfPos = ocfs.length ? ocfs.reduce(function (a, x) { return a + x.ocf; }, 0) > 0 : null;
+
+    // ---- ⑤ 업종 내 밸류 비교 (내 종목들 중 같은 업종끼리만) ----
+    if (peers && peers.length >= 2 && r.zonePer != null) {
+      var vals = peers.filter(function (x) { return x != null && x > 0; }).slice().sort(function (a, b) { return a - b; });
+      if (vals.length >= 2) {
+        r.peerMedianPer = percentile(vals, 0.5);
+        r.peerCount = vals.length;
+        r.cheapVsPeers = r.zonePer <= r.peerMedianPer;
+      }
+    }
+
+    // ---- 7대 필터 ----
+    var f3 = (r.debtRatio == null && r.ocfPos == null) ? null
+      : ((r.debtRatio == null || r.debtRatio < 100) && r.ocfPos !== false);
+    r.filters = [
+      { no: 1, label: '실적 지속성 — 영업이익 YoY 개선 3분기+', auto: true,
+        ok: r.opStreak != null ? r.opStreak >= 3 : null, note: r.opStreak != null ? '연속 ' + r.opStreak + '분기' : '데이터 부족' },
+      { no: 2, label: '이익의 질 — 일회성 손익 배제 확인', auto: false,
+        ok: p.quality ? true : null, note: '수기 확인 (편집기 체크)' },
+      { no: 3, label: '재무 안정성 — 부채비율<100% · OCF(+)', auto: true, ok: f3,
+        note: (r.debtRatio != null ? '부채비율 ' + Math.round(r.debtRatio) + '%' : '부채총계 미입력') + (r.ocfPos != null ? ' · OCF(4Q) ' + (r.ocfPos ? '+' : '−') : '') },
+      { no: 4, label: '마진 개선 추세 — OPM 최근4Q > 직전4Q', auto: true,
+        ok: marginImproving(list), note: '' },
+      { no: 5, label: '밸류 — 동종(내 종목) 대비 포워드PER 중앙값 이하', auto: true,
+        ok: r.cheapVsPeers != null ? r.cheapVsPeers : null,
+        note: r.peerMedianPer != null ? '동종 ' + r.peerCount + '곳 중앙값 ' + r.peerMedianPer.toFixed(1) + '배' : '비교할 동종 종목 없음' },
+      { no: 6, label: '촉매 존재 — 6~12개월 내 · 유효', auto: true,
+        ok: r.catalystOK ? true : (r.catalysts.length ? false : null), note: r.catalysts.length ? '촉매 ' + r.catalysts.length + '건' : '촉매 미입력' },
+      { no: 7, label: '주봉 바닥권 — 바닥 다진 뒤 매수', auto: false,
+        ok: p.chart ? true : null, note: '수기 확인 (편집기 체크)' }
+    ];
+    r.score = r.filters.filter(function (f) { return f.ok === true; }).length;
+    r.scoreKnown = r.filters.filter(function (f) { return f.ok !== null; }).length;
+    return r;
+  }
+
   /* ---------- 포맷 ---------- */
   function unitShort(unit) {
     if (!unit || unit === '조원') return '조';
@@ -371,6 +514,7 @@
   global.Valuation = {
     annualFromQuarters: annualFromQuarters, computeTrends: computeTrends,
     computeValuation: computeValuation, computeBand: computeBand,
+    computePrinciples: computePrinciples, unitToWon: unitToWon,
     WEIGHT_PRESETS: WEIGHT_PRESETS, PRESET_LABELS: PRESET_LABELS, presetKeyOf: presetKeyOf,
     fmt: fmt, yearOf: yearOf, fullYear: fullYear, quarterNo: quarterNo, unitShort: unitShort
   };

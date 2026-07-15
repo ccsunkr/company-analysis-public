@@ -90,6 +90,30 @@
     return '<span class="' + cls + '"><span class="dot"></span>' + (s ? s.label : '판단 불가') + '</span>';
   }
 
+  /* ---------- 뷰 모드 (카드 ↔ 비교표) ---------- */
+  var VIEW_LS = 'companyAnalysis.viewMode';
+  function viewMode() { try { return localStorage.getItem(VIEW_LS) || 'cards'; } catch (e) { return 'cards'; } }
+  function setViewMode(m) { try { localStorage.setItem(VIEW_LS, m); } catch (e) {} }
+  var tableSort = { key: 'fper', dir: 1 };
+
+  function sectorKey(c) { return (c.sector || '').trim() || '미분류'; }
+
+  /* 종목별 계산 결과 일괄 생성 (+업종 내 포워드PER 비교용 peers) */
+  function buildRows(companies) {
+    var rows = companies.map(function (c) {
+      var eff = effectiveCompany(c);
+      var val = V.computeValuation(eff);
+      var U = V.unitToWon(c.unit);
+      var fni = Number((eff.valuation || {}).forwardNI);
+      var zp = (fni > 0 && val.marketCap != null) ? val.marketCap / (fni * U) : val.per;
+      return { c: c, eff: eff, val: val, zonePer: (zp != null && isFinite(zp) && zp > 0) ? zp : null };
+    });
+    var bySector = {};
+    rows.forEach(function (r) { (bySector[sectorKey(r.c)] = bySector[sectorKey(r.c)] || []).push(r.zonePer); });
+    rows.forEach(function (r) { r.pr = V.computePrinciples(r.eff, r.val, bySector[sectorKey(r.c)]); });
+    return rows;
+  }
+
   /* ---------- 목록 ---------- */
   function renderGallery(companies) {
     var app = document.getElementById('app');
@@ -117,15 +141,109 @@
           '</div>' +
         '</div>';
     }).join('');
+    var mode = viewMode();
+    var toggle =
+      '<span style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden">' +
+      '<button class="btn sm" id="btn-view-cards" style="border:0;border-radius:0;' + (mode === 'cards' ? 'background:var(--navy);color:#fff' : '') + '">카드</button>' +
+      '<button class="btn sm" id="btn-view-table" style="border:0;border-radius:0;' + (mode === 'table' ? 'background:var(--navy);color:#fff' : '') + '">비교표</button></span>';
     app.innerHTML =
       '<div class="gallery-head"><h2>분석 기업 ' + companies.length + '</h2>' +
-      '<div style="display:flex;gap:10px;align-items:center">' + sharedStatusHtml() +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' + sharedStatusHtml() + toggle +
       '<a class="btn primary sm" href="editor.html">＋ 기업 추가 / 편집</a></div></div>' +
-      (companies.length ? '<div class="grid">' + cards + '</div>' : emptyState()) + disclaimer();
-    Array.prototype.forEach.call(app.querySelectorAll('.card'), function (el) {
+      (companies.length
+        ? (mode === 'table' ? compareTable(companies) : '<div class="grid">' + cards + '</div>')
+        : emptyState()) + disclaimer();
+    Array.prototype.forEach.call(app.querySelectorAll('[data-id]'), function (el) {
       el.addEventListener('click', function () { location.hash = '#/' + el.getAttribute('data-id'); });
     });
+    var bvc = document.getElementById('btn-view-cards');
+    if (bvc) bvc.addEventListener('click', function () { setViewMode('cards'); renderGallery(loadCompanies()); });
+    var bvt = document.getElementById('btn-view-table');
+    if (bvt) bvt.addEventListener('click', function () { setViewMode('table'); renderGallery(loadCompanies()); });
+    Array.prototype.forEach.call(app.querySelectorAll('[data-sortkey]'), function (th) {
+      th.addEventListener('click', function () {
+        var k = th.getAttribute('data-sortkey');
+        if (tableSort.key === k) tableSort.dir = -tableSort.dir; else { tableSort.key = k; tableSort.dir = 1; }
+        renderGallery(loadCompanies());
+      });
+    });
     bindStoreKeyBtn();
+  }
+
+  /* ---------- 비교표 — 내가 알아본 종목끼리, 같은 업종끼리 (핵심: PER·포워드PER·ROE·영업이익률) ---------- */
+  function compareTable(companies) {
+    var rows = buildRows(companies);
+    // 정렬용 수치 추출
+    rows.forEach(function (r) {
+      var t = r.val.trends || {};
+      r.m = {
+        mcap: r.val.marketCap, per: r.val.per, fper: r.pr.forwardPer,
+        roe: r.val.roe, opm: (t.ttmRevenue ? t.ttmOp / t.ttmRevenue : null),
+        pbr: r.val.pbr, debt: r.pr.debtRatio, div: r.val.divYield,
+        revYoY: r.pr.screen ? r.pr.screen.revYoY : null, opYoY: r.pr.screen ? r.pr.screen.opYoY : null,
+        score: r.pr.score
+      };
+    });
+    var k = tableSort.key, dir = tableSort.dir;
+    rows.sort(function (a, b) {
+      var x = a.m[k], y = b.m[k];
+      if (x == null && y == null) return 0;
+      if (x == null) return 1; if (y == null) return -1;
+      return (x - y) * dir;
+    });
+    // 업종 그룹핑 (같은 업종 텍스트끼리) + 그룹 내 하이라이트(최저 포워드PER·최고 ROE)
+    var groups = {};
+    rows.forEach(function (r) { (groups[sectorKey(r.c)] = groups[sectorKey(r.c)] || []).push(r); });
+    var sigTxt = { go: ['● 매수후보', 'var(--green)'], numbersOnly: ['숫자만', 'var(--amber)'], catalystOnly: ['촉매만 ⚠', 'var(--red)'], none: ['–', 'var(--grey)'] };
+    function th(label, key, hint) {
+      return '<th data-sortkey="' + key + '" style="cursor:pointer;white-space:nowrap" title="' + (hint || '클릭해 정렬') + '">' + label +
+        (tableSort.key === key ? (tableSort.dir === 1 ? ' ▲' : ' ▼') : '') + '</th>';
+    }
+    var head = '<tr><th style="text-align:left">기업</th>' +
+      th('시총', 'mcap') + '<th style="color:var(--blue)" data-sortkey="per">PER' + (tableSort.key === 'per' ? (tableSort.dir === 1 ? ' ▲' : ' ▼') : '') + '</th>' +
+      th('포워드PER', 'fper', '내년 예상이익 기준 — 포워드 중시 원칙') + th('ROE', 'roe') + th('영업이익률', 'opm', 'TTM — 해자 신호') +
+      th('PBR', 'pbr') + th('부채비율', 'debt') + th('배당', 'div') +
+      th('매출YoY', 'revYoY', '최근 분기, 전년 동분기 대비') + th('영익YoY', 'opYoY') +
+      '<th title="매출↑+이익↑+흑자 (AND)">3대<br>스크리닝</th>' + th('7대<br>필터', 'score') + '<th>촉매</th><th>신호<br>(숫자×촉매)</th></tr>';
+    var body = '';
+    Object.keys(groups).sort().forEach(function (sec) {
+      var g = groups[sec];
+      var minF = null, maxR = null;
+      if (g.length >= 2) {
+        g.forEach(function (r) {
+          if (r.m.fper != null && (minF == null || r.m.fper < minF)) minF = r.m.fper;
+          if (r.m.roe != null && (maxR == null || r.m.roe > maxR)) maxR = r.m.roe;
+        });
+      }
+      body += '<tr><td colspan="14" style="text-align:left;background:var(--bg-soft,#f4f6f8);font-weight:700;padding:6px 8px">' + esc(sec) + ' (' + g.length + ')</td></tr>';
+      g.forEach(function (r) {
+        var s = sigTxt[r.pr.signal] || sigTxt.none;
+        var warn = r.pr.alerts.length ? ' <span title="' + esc(r.pr.alerts.join('\n')) + '" style="color:var(--red)">⚠</span>' : '';
+        function td(v, fmtFn, hl) {
+          return '<td' + (hl ? ' style="color:var(--green);font-weight:800"' : '') + '>' + (v == null ? '–' : fmtFn(v)) + '</td>';
+        }
+        body += '<tr style="cursor:pointer" data-id="' + r.c.id + '">' +
+          '<td style="text-align:left;font-weight:700">' + esc(r.c.name) + warn +
+          (r.c.__shared ? ' <span class="sub" style="color:#2e75b6">☁</span>' : '') + '</td>' +
+          td(r.m.mcap, fmt.won) +
+          td(r.m.per, function (x) { return x.toFixed(1); }) +
+          td(r.m.fper, function (x) { return '<b>' + x.toFixed(1) + '</b>'; }, g.length >= 2 && r.m.fper === minF) +
+          td(r.m.roe, function (x) { return fmt.pct(x); }, g.length >= 2 && r.m.roe === maxR) +
+          td(r.m.opm, fmt.pct) +
+          td(r.m.pbr, function (x) { return x.toFixed(2); }) +
+          td(r.m.debt, function (x) { return Math.round(x) + '%'; }) +
+          td(r.m.div, function (x) { return fmt.pct(x, 1); }) +
+          td(r.m.revYoY, fmt.signedPct) + td(r.m.opYoY, fmt.signedPct) +
+          '<td title="' + (r.pr.screen ? esc('매출↑ ' + mk(r.pr.screen.rev) + ' · 이익↑ ' + mk(r.pr.screen.op) + ' · 흑자 ' + mk(r.pr.screen.profit) + ' (' + (r.pr.latestLabel || '') + ' YoY)') : '') + '">' +
+            (r.pr.screen ? (r.pr.screen.pass ? '<span style="color:var(--green);font-weight:800">✓</span>' : '<span style="color:var(--red)">✗</span>') : '–') + '</td>' +
+          '<td>' + (r.pr.scoreKnown ? r.pr.score + '/' + r.pr.scoreKnown : '–') + '</td>' +
+          '<td>' + (r.pr.catalysts.length ? r.pr.catalysts.filter(function (x) { return x.status === '유효' && !x.expired; }).length + '/' + r.pr.catalysts.length : '–') + '</td>' +
+          '<td style="white-space:nowrap;color:' + s[1] + ';font-weight:700">' + s[0] + '</td></tr>';
+      });
+    });
+    return '<div class="section" style="margin-top:0"><p class="hint" style="margin-top:0">' +
+      '핵심 3지표(<b>PER·ROE·영업이익률</b>)+포워드PER 중심 · <b>같은 업종끼리만</b> 비교(업종명이 같은 종목끼리 묶임) · 그룹 내 <span style="color:var(--green);font-weight:700">최저 포워드PER·최고 ROE</span> 강조 · 열 제목 클릭 = 정렬 · ⚠ = 재고/채권이 매출보다 빨리 증가</p>' +
+      '<div class="tbl-scroll"><table class="fin"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div></div>';
   }
 
   /* ---------- 공유 저장소 상태 표시 + 비밀번호 입력 ---------- */
@@ -167,9 +285,22 @@
     val.livePrice = eff.__livePrice || null;
     var t = val.trends || {};
 
+    // 투자 원칙 체크 — 업종 내 비교(내가 알아본 종목 사이에서만)
+    var all = loadCompanies();
+    var peers = all.filter(function (x) { return sectorKey(x) === sectorKey(company); }).map(function (x) {
+      var e2 = x.id === company.id ? eff : effectiveCompany(x);
+      var v2 = x.id === company.id ? val : V.computeValuation(e2);
+      var U = V.unitToWon(x.unit);
+      var fni = Number((e2.valuation || {}).forwardNI);
+      var zp = (fni > 0 && v2.marketCap != null) ? v2.marketCap / (fni * U) : v2.per;
+      return (zp != null && isFinite(zp) && zp > 0) ? zp : null;
+    });
+    var pr = V.computePrinciples(eff, val, peers);
+
     app.innerHTML =
       '<a class="back-link" href="#">← 목록으로</a>' +
       detailHead(company, val) +
+      principlesSection(pr, company) +
       valuationSection(company, val) +
       growthSection(val, t) +
       quarterChartSection() +
@@ -343,6 +474,80 @@
       '</div>';
   }
 
+  /* ---------- 투자 원칙 체크 섹션 (숫자×촉매 · 3대 스크리닝 · 7대 필터 · 밸류 3좌표) ---------- */
+  function chip(label, ok, sub) {
+    var col = ok === true ? 'var(--green)' : (ok === false ? 'var(--red)' : 'var(--grey)');
+    return '<span style="font-weight:700;color:' + col + '">' + mk(ok) + ' ' + label +
+      (sub ? ' <span class="sub" style="font-weight:400">' + sub + '</span>' : '') + '</span>';
+  }
+  function principlesSection(pr, c) {
+    var hasAny = pr.screen || pr.catalysts.length || pr.zonePer != null;
+    if (!hasAny) return '';
+    var SIG = {
+      go: ['var(--green)', '● 매수 후보 (숫자 × 촉매 충족)', '곱셈이 살아있음 — 마지막 관문: ⑦주봉 바닥권 확인 후 3분할 매수(40/30/30).'],
+      numbersOnly: ['var(--amber)', '숫자만 충족 — 촉매 없음', '촉매 없이는 하염없이 기다릴 수 있음(가치함정 주의). 6~12개월 내 구체적 촉매를 찾아 입력하세요.'],
+      catalystOnly: ['var(--red)', '⚠ 촉매만 있음 — 숫자 미충족', '숫자(실적 개선) 없는 테마는 폭탄. 매출↑·이익↑·흑자가 확인될 때까지 관망.'],
+      none: ['var(--grey)', '관망', '숫자도 촉매도 없음 — "아직 싼데 막 좋아지기 시작한" 자리가 아님. 현금도 포지션.']
+    };
+    var s = SIG[pr.signal];
+    var scr = pr.screen;
+    var html = '<div class="section"><h3>🎯 투자 원칙 체크 — 주가 = 숫자 × 촉매</h3>';
+    // 신호 배너
+    html += '<div style="border-left:4px solid ' + s[0] + ';background:var(--bg-soft,#fafbfc);padding:10px 14px;border-radius:6px;margin-bottom:12px">' +
+      '<b style="color:' + s[0] + ';font-size:15px">' + s[1] + '</b><div class="small-note" style="margin-top:3px">' + s[2] + '</div></div>';
+    // 3대 스크리닝
+    if (scr) {
+      html += '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px">' +
+        '<b style="font-size:13px">3대 스크리닝(AND)</b>' +
+        chip('매출↑', scr.rev, scr.revYoY != null ? fmt.signedPct(scr.revYoY) : '') +
+        chip('영업이익↑', scr.op, scr.opYoY != null ? fmt.signedPct(scr.opYoY) : '') +
+        chip('흑자', scr.profit) +
+        '<span class="small-note">' + esc(pr.latestLabel || '') + ' YoY 기준' +
+        (pr.revQoQ != null ? ' · QoQ 매출 ' + fmt.signedPct(pr.revQoQ) : '') +
+        (pr.opQoQ != null ? '·영업이익 ' + fmt.signedPct(pr.opQoQ) : '') + '</span></div>';
+    }
+    // 위험 경보 + P/Q
+    pr.alerts.forEach(function (a) { html += '<p class="small-note" style="color:var(--red);margin:2px 0">' + esc(a) + ' — 이익의 질 점검 필요</p>'; });
+    if (pr.pq === 'P') html += '<p class="small-note" style="color:var(--amber);margin:2px 0">⚠ <b>P-사이클</b>(가격 주도) — 사이클 위치가 전부. <b>정점의 저PER은 함정</b>입니다. PBR 중심(경기민감·자산형 프리셋)으로 보세요.</p>';
+    if (pr.pq === 'Q') html += '<p class="small-note" style="margin:2px 0">🔵 <b>Q-사이클</b>(수량·점유율 성장) — 이 유형의 저PER은 진짜 기회일 수 있습니다.</p>';
+    // 포워드 PER · 밸류 3좌표
+    if (pr.zonePer != null) {
+      function pos(x) { var lo = Math.log(5), hi = Math.log(80); return Math.max(0, Math.min(100, (Math.log(x) - lo) / (hi - lo) * 100)); }
+      html += '<div style="margin-top:12px"><b style="font-size:13px">밸류 3좌표 — ' +
+        (pr.zoneIsForward ? '포워드 PER <b>' + pr.zonePer.toFixed(1) + '배</b> (내년 예상이익 기준)' : '현재 PER ' + pr.zonePer.toFixed(1) + '배 <span class="sub">(포워드 순이익 입력 시 포워드 기준)</span>') +
+        ' → <span style="color:var(--blue)">' + esc(pr.zone || '') + '</span></b>' +
+        '<div class="band" style="margin-top:6px"><div class="band-track">' +
+        '<div class="band-marker" style="left:' + pos(pr.zonePer) + '%"></div></div>' +
+        '<div class="band-scale"><span>저 10배 (매수 검토)</span><span>중 20배 (분할매도 시작)</span><span>고 60배</span></div></div>' +
+        '<p class="small-note">전략: "저→중" 재평가 구간을 먹는다. 중 도달 시 분할 매도 시작.</p></div>';
+    }
+    // 7대 필터
+    html += '<div style="margin-top:12px"><b style="font-size:13px">7대 필터 — ' + pr.score + '/' + pr.scoreKnown + ' 통과' +
+      (pr.scoreKnown < 7 ? ' <span class="sub">(' + (7 - pr.scoreKnown) + '개 미확인)</span>' : '') + '</b>';
+    pr.filters.forEach(function (f) {
+      var st = f.ok === true ? 'ok' : 'todo';
+      html += '<div class="check-row ' + st + '"><span class="chk" style="' + (f.ok === false ? 'color:var(--red)' : '') + '">' + mk(f.ok) + '</span>' +
+        '<span class="chk-label">' + f.no + '. ' + esc(f.label) + '</span>' +
+        '<span class="chk-note">' + esc(f.note || (f.auto ? '자동' : '')) + '</span></div>';
+    });
+    html += '</div>';
+    // 촉매 목록
+    if (pr.catalysts.length) {
+      var GCOL = { 'Fact/A': 'var(--green)', 'Fact/B': 'var(--blue)', '추정': 'var(--amber)', '판단': 'var(--grey)' };
+      html += '<div style="margin-top:12px"><b style="font-size:13px">촉매 (' + pr.catalysts.length + ')</b>';
+      pr.catalysts.forEach(function (cat) {
+        var dead = cat.expired || cat.status !== '유효';
+        html += '<div style="border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-top:6px;' + (dead ? 'opacity:.55' : '') + '">' +
+          '<span style="border:1px solid ' + (GCOL[cat.grade] || 'var(--grey)') + ';color:' + (GCOL[cat.grade] || 'var(--grey)') + ';border-radius:6px;padding:1px 6px;font-size:11px;font-weight:700">' + esc(cat.grade) + '</span> ' +
+          esc(cat.text) +
+          '<span class="small-note" style="margin-left:8px">' + (cat.due ? '시한 ' + esc(cat.due) : '시한 미지정') +
+          ' · ' + esc(cat.status) + (cat.expired ? ' · <b style="color:var(--red)">기한 경과 — 논리 재점검</b>' : '') + '</span></div>';
+      });
+      html += '</div>';
+    }
+    return html + '</div>';
+  }
+
   /* 좋음(+1)/나쁨(-1)/중립(0)에 따라 값에 색을 입힘 */
   function colorNum(txt, good) {
     if (good > 0) return '<span style="color:var(--green)">' + txt + '</span>';
@@ -471,6 +676,7 @@
   }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function mk(b) { return b === true ? '✓' : (b === false ? '✗' : '?'); }
   function clamp(v) { return Math.max(0, Math.min(100, v)); }
 
   function route() {

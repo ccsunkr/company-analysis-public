@@ -142,8 +142,12 @@
             <div class="field"><label>발행주식수 (주)</label><input id="v-shares" type="number" step="any" placeholder="5969782550"></div>
           </div>
           <div class="row2">
-            <div class="field dart"><label>순이익 TTM (조원) <span class="desc">미입력 시 분기 순이익 합 사용</span></label><input id="v-netIncomeTTM" type="number" step="any" placeholder="34.0"></div>
-            <div class="field dart"><label>자본총계 (조원) <span class="desc">DART 재무상태표</span></label><input id="v-equity" type="number" step="any" placeholder="402.0"></div>
+            <div class="field dart"><label>순이익 TTM (재무 단위) <span class="desc">미입력 시 분기 순이익 합 사용</span></label><input id="v-netIncomeTTM" type="number" step="any" placeholder="34.0"></div>
+            <div class="field dart"><label>자본총계 (재무 단위) <span class="desc">OpenDART·PDF 자동</span></label><input id="v-equity" type="number" step="any" placeholder="402.0"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>포워드(내년 예상) 순이익 (재무 단위) <span class="desc">포워드 PER·밸류 3좌표용 — 컨센서스나 내 추정</span></label><input id="v-forwardNI" type="number" step="any" placeholder="40.0"></div>
+            <div class="field dart"><label>부채총계 (재무 단위) <span class="desc">부채비율용 — OpenDART 자동</span></label><input id="v-debt" type="number" step="any" placeholder="100.0"></div>
           </div>
           <div class="row3">
             <div class="field"><label>과거 PER 하단</label><input id="v-perBand-low" type="number" step="any" placeholder="8"></div>
@@ -209,6 +213,26 @@
               <thead><tr><th>분기</th><th>매입액</th><th></th></tr></thead>
               <tbody id="bb-body"></tbody>
             </table>
+          </div>
+
+          <div class="fieldset-title">🎯 투자 원칙 체크 — 숫자 × 촉매</div>
+          <p class="small-note">주가 = 숫자 × 촉매(곱셈 — 하나라도 0이면 안 움직임). <b>숫자</b>(3대 스크리닝: 매출↑·이익↑·흑자)는 분기 데이터에서 자동 판정되고,
+            여기에는 <b>촉매</b>와 수기 확인 항목을 입력합니다. 좋은 촉매: 구체적 · 검증 가능 · <b>6~12개월 시한</b> · 매출/이익 숫자로 연결. 막연한 테마는 촉매가 아님.</p>
+          <div class="row2">
+            <div class="field"><label>P/Q 사이클 유형 <span class="desc">P-사이클(가격: 정유·화학·메모리)은 정점 저PER이 함정</span></label>
+              <select id="pr-pq"><option value="">미지정</option><option value="P">P-사이클 (가격 주도 — 사이클 위치가 전부)</option><option value="Q">Q-사이클 (수량·점유율 성장 — 저PER이 진짜 기회일 수 있음)</option></select></div>
+            <div class="field"></div>
+          </div>
+          <div class="toolbar"><button class="btn sm" id="btn-addcat" type="button">＋ 촉매 추가</button></div>
+          <div class="tbl-scroll">
+            <table class="qtable">
+              <thead><tr><th style="text-align:left;min-width:220px">촉매 내용 (매출·이익으로 연결되게)</th><th>시한 (YYYY-MM)</th><th>근거등급</th><th>상태</th><th></th></tr></thead>
+              <tbody id="cat-body"></tbody>
+            </table>
+          </div>
+          <div class="field" style="margin-top:8px">
+            <label style="font-weight:400"><input type="checkbox" id="pr-quality" style="width:auto"> <b>② 이익의 질</b> 확인 — 일회성 손익(자산매각·보상금 등) 배제하고 봤음</label>
+            <label style="font-weight:400"><input type="checkbox" id="pr-chart" style="width:auto"> <b>⑦ 주봉 바닥권</b> 확인 — 하락 중(떨어지는 칼날)이 아니라 바닥 다진 뒤임</label>
           </div>
 
           <div class="fieldset-title">해설 (리스크 헤지 관점)</div>
