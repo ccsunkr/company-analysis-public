@@ -300,7 +300,7 @@
     app.innerHTML =
       '<a class="back-link" href="#">← 목록으로</a>' +
       detailHead(company, val) +
-      principlesSection(pr, company) +
+      principlesSection(pr, company, val) +
       valuationSection(company, val) +
       growthSection(val, t) +
       quarterChartSection() +
@@ -480,9 +480,11 @@
     return '<span style="font-weight:700;color:' + col + '">' + mk(ok) + ' ' + label +
       (sub ? ' <span class="sub" style="font-weight:400">' + sub + '</span>' : '') + '</span>';
   }
-  function principlesSection(pr, c) {
+  function principlesSection(pr, c, val) {
     var hasAny = pr.screen || pr.catalysts.length || pr.zonePer != null;
     if (!hasAny) return '';
+    var u = c.unit || '조원';
+    var t = val.trends || {};
     var SIG = {
       go: ['var(--green)', '● 매수 후보 (숫자 × 촉매 충족)', '곱셈이 살아있음 — 마지막 관문: ⑦주봉 바닥권 확인 후 3분할 매수(40/30/30).'],
       numbersOnly: ['var(--amber)', '숫자만 충족 — 촉매 없음', '촉매 없이는 하염없이 기다릴 수 있음(가치함정 주의). 6~12개월 내 구체적 촉매를 찾아 입력하세요.'],
@@ -492,24 +494,100 @@
     var s = SIG[pr.signal];
     var scr = pr.screen;
     var html = '<div class="section"><h3>🎯 투자 원칙 체크 — 주가 = 숫자 × 촉매</h3>';
-    // 신호 배너
-    html += '<div style="border-left:4px solid ' + s[0] + ';background:var(--bg-soft,#fafbfc);padding:10px 14px;border-radius:6px;margin-bottom:12px">' +
-      '<b style="color:' + s[0] + ';font-size:15px">' + s[1] + '</b><div class="small-note" style="margin-top:3px">' + s[2] + '</div></div>';
-    // 3대 스크리닝
-    if (scr) {
-      html += '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;margin-bottom:6px">' +
-        '<b style="font-size:13px">3대 스크리닝(AND)</b>' +
-        chip('매출↑', scr.rev, scr.revYoY != null ? fmt.signedPct(scr.revYoY) : '') +
-        chip('영업이익↑', scr.op, scr.opYoY != null ? fmt.signedPct(scr.opYoY) : '') +
-        chip('흑자', scr.profit) +
-        '<span class="small-note">' + esc(pr.latestLabel || '') + ' YoY 기준' +
-        (pr.revQoQ != null ? ' · QoQ 매출 ' + fmt.signedPct(pr.revQoQ) : '') +
-        (pr.opQoQ != null ? '·영업이익 ' + fmt.signedPct(pr.opQoQ) : '') + '</span></div>';
+
+    // ── 1행: 시가총액 (시작점 — 주가가 아니라 몸값을 보라) ──
+    if (val.marketCap != null) {
+      var mc = val.marketCap;
+      var size = mc < 5e11 ? ['중소형주', 'var(--green)', '소외 구간 — 작은 실적 변화에도 재평가 탄력 큼']
+        : (mc < 2e12 ? ['중형주', 'var(--blue)', '']
+        : ['대형주', 'var(--grey)', '커버리지 많음 — 개인의 정보 우위 작음']);
+      html += '<div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px">' +
+        '<span class="lbl" style="font-size:12px;color:var(--ink-2)">시가총액(몸값)</span>' +
+        '<b style="font-size:22px">' + fmt.won(mc) + '</b>' +
+        '<span style="font-weight:700;color:' + size[1] + '">' + size[0] + '</span>' +
+        (size[2] ? '<span class="small-note">' + size[2] + '</span>' : '') +
+        (val.livePrice ? '<span class="small-note">📈 실시간가 기준</span>' : '') + '</div>';
     }
-    // 위험 경보 + P/Q
+
+    // ── 2행: 핵심 지표 한 줄 (매출·영업이익·영업이익률·PER·ROE) ──
+    if (pr.latestRev != null) {
+      html += '<div class="metric-grid" style="margin-bottom:10px">' +
+        metric('매출액', fmt.money(pr.latestRev, u), esc(pr.latestLabel || '')) +
+        metric('영업이익', fmt.money(pr.latestOp, u), esc(pr.latestLabel || '')) +
+        metric('영업이익률', pr.latestOpm != null ? fmt.pct(pr.latestOpm) : '–', '해자 신호') +
+        metric('PER', fmt.x(val.per), pr.forwardPer != null ? '포워드 ' + pr.forwardPer.toFixed(1) + '배' : '') +
+        metric('ROE', val.roe != null ? fmt.pct(val.roe) : '–', '') +
+        '</div>';
+    }
+
+    // ── 3행: 변화율 + 흑자 신호 (색상) ──
+    if (scr) {
+      var PS = {
+        turnBlack: ['🔥 흑자 전환!', 'var(--green)', '#e6f6ee'],
+        stayBlack: ['흑자 유지', 'var(--green)', ''],
+        turnRed: ['⚠ 적자 전환', 'var(--red)', '#fdecec'],
+        stayRed: ['적자 지속', 'var(--red)', '#fdecec']
+      };
+      var ps = PS[pr.profitState] || PS.stayRed;
+      function delta(label, ok, yoy) {
+        var col = ok === true ? 'var(--green)' : (ok === false ? 'var(--red)' : 'var(--grey)');
+        return '<span style="border:1.5px solid ' + col + ';color:' + col + ';border-radius:8px;padding:4px 10px;font-weight:800">' +
+          label + ' ' + (yoy != null ? fmt.signedPct(yoy) : mk(ok)) + '</span>';
+      }
+      html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' +
+        '<b style="font-size:13px">변화(3대 스크리닝)</b>' +
+        delta('매출 YoY', scr.rev, scr.revYoY) +
+        delta('영업이익 YoY', scr.op, scr.opYoY) +
+        '<span style="border-radius:8px;padding:4px 10px;font-weight:800;color:' + ps[1] + ';' + (ps[2] ? 'background:' + ps[2] : 'border:1.5px solid ' + ps[1]) + '">' + ps[0] + '</span>' +
+        '<span class="small-note">' + esc(pr.latestLabel || '') + ' 전년 동분기 대비' +
+        (pr.revQoQ != null ? ' · QoQ 매출 ' + fmt.signedPct(pr.revQoQ) : '') +
+        (pr.opQoQ != null ? ' 영업이익 ' + fmt.signedPct(pr.opQoQ) : '') + '</span></div>';
+    }
     pr.alerts.forEach(function (a) { html += '<p class="small-note" style="color:var(--red);margin:2px 0">' + esc(a) + ' — 이익의 질 점검 필요</p>'; });
-    if (pr.pq === 'P') html += '<p class="small-note" style="color:var(--amber);margin:2px 0">⚠ <b>P-사이클</b>(가격 주도) — 사이클 위치가 전부. <b>정점의 저PER은 함정</b>입니다. PBR 중심(경기민감·자산형 프리셋)으로 보세요.</p>';
-    if (pr.pq === 'Q') html += '<p class="small-note" style="margin:2px 0">🔵 <b>Q-사이클</b>(수량·점유율 성장) — 이 유형의 저PER은 진짜 기회일 수 있습니다.</p>';
+
+    // ── 4행: P-사이클 위치 점검 (OPM 밴드·GPM 방향·재고·PBR 밴드) ──
+    var cyc = [];
+    if (t.opmLast != null && t.opmMin != null && t.opmMax > t.opmMin) {
+      var opos = (t.opmLast - t.opmMin) / (t.opmMax - t.opmMin);
+      var oc = opos >= 0.67 ? ['역사적 상단 — 정점 부근 가능성 ⚠', 'var(--red)'] : (opos <= 0.33 ? ['역사적 하단 — 바닥권 가능성', 'var(--green)'] : ['중간', 'var(--grey)']);
+      cyc.push('OPM ' + fmt.pct(t.opmLast) + ' <span style="color:' + oc[1] + ';font-weight:700">' + oc[0] + '</span> <span class="sub">(역사 ' + fmt.pct(t.opmMin) + '~' + fmt.pct(t.opmMax) + ')</span>');
+    }
+    var gq = (t.q || []).filter(function (x) { return x.gpm != null; });
+    if (gq.length >= 5) {
+      var gLast = gq[gq.length - 1].gpm;
+      var gPrev = gq.slice(-5, -1).reduce(function (a, x) { return a + x.gpm; }, 0) / 4;
+      cyc.push('GPM(스프레드) ' + (gLast > gPrev ? '<span style="color:var(--green);font-weight:700">▲ 확대</span>' : '<span style="color:var(--red);font-weight:700">▼ 축소</span>') +
+        ' <span class="sub">' + fmt.pct(gLast) + ' vs 직전4Q평균 ' + fmt.pct(gPrev) + '</span>');
+    }
+    if (pr.invYoY != null) cyc.push('재고 YoY ' + fmt.signedPct(pr.invYoY) +
+      (pr.screen && pr.screen.revYoY != null && pr.invYoY > pr.screen.revYoY ? ' <span style="color:var(--red);font-weight:700">(매출보다 빠름 ⚠)</span>' : ''));
+    if (val.pbrBandPos != null) cyc.push('PBR 역사 밴드 위치 <b>' + Math.round(val.pbrBandPos * 100) + '%</b>' +
+      (val.pbrBandPos >= 0.67 ? ' <span style="color:var(--red);font-weight:700">상단 ⚠</span>' : (val.pbrBandPos <= 0.33 ? ' <span style="color:var(--green);font-weight:700">하단</span>' : '')));
+    if (cyc.length) {
+      html += '<div style="margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:8px 12px">' +
+        '<b style="font-size:13px">' + (pr.pq === 'P' ? '⚠ P-사이클 위치 점검 — 사이클 위치가 전부, 정점의 저PER은 함정' : '사이클 위치 점검') + '</b>' +
+        (pr.pq === 'Q' ? ' <span class="small-note">Q-사이클(수량 성장) — 저PER이 진짜 기회일 수 있음</span>' : '') +
+        '<div class="small-note" style="margin-top:4px;line-height:2">' + cyc.join('<br>') + '</div></div>';
+    } else if (pr.pq === 'P') {
+      html += '<p class="small-note" style="color:var(--amber)">⚠ P-사이클 — 정점의 저PER은 함정. OPM 밴드·재고를 보려면 원가·재고 데이터를 입력하세요.</p>';
+    }
+
+    // ── 5행: 주봉 차트 (네이버) — ⑦ 바닥권 확인 ──
+    if (/^\d{6}$/.test((c.ticker || '').trim())) {
+      var code = c.ticker.trim();
+      var chartUrl = 'https://ssl.pstatic.net/imgfinance/chart/item/candle/week/' + code + '.png?sidcode=' + Date.now();
+      html += '<div style="margin-top:12px"><b style="font-size:13px">⑦ 주봉 차트 — 바닥권 확인</b> ' +
+        '<span class="small-note">하락 중(떨어지는 칼날)이 아니라 <b>바닥을 다진 뒤</b>인지. ' +
+        '<a href="https://finance.naver.com/item/fchart.naver?code=' + code + '" target="_blank" rel="noopener">네이버에서 크게 보기 ↗</a></span>' +
+        '<div style="margin-top:6px"><img src="' + chartUrl + '" referrerpolicy="no-referrer" alt="주봉 차트" ' +
+        'style="max-width:100%;border:1px solid var(--line);border-radius:8px;background:#fff" ' +
+        'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'block\'">' +
+        '<p class="small-note" style="display:none">차트 이미지를 불러오지 못했습니다 — 위 네이버 링크로 확인하세요.</p></div></div>';
+    }
+
+    // ── 판정: 숫자 × 촉매 신호 배너 ──
+    html += '<div style="border-left:4px solid ' + s[0] + ';background:var(--bg-soft,#fafbfc);padding:10px 14px;border-radius:6px;margin-top:14px">' +
+      '<b style="color:' + s[0] + ';font-size:15px">' + s[1] + '</b><div class="small-note" style="margin-top:3px">' + s[2] + '</div></div>';
     // 포워드 PER · 밸류 3좌표
     if (pr.zonePer != null) {
       function pos(x) { var lo = Math.log(5), hi = Math.log(80); return Math.max(0, Math.min(100, (Math.log(x) - lo) / (hi - lo) * 100)); }

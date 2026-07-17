@@ -395,19 +395,25 @@
         profit: cur.op > 0
       };
       r.screen.pass = r.screen.rev === true && r.screen.op === true && r.screen.profit;
+      // 표시용: 최근 분기 수준 + 흑자 상태(전환/유지/적자)
+      r.latestRev = cur.revenue; r.latestOp = cur.op;
+      r.latestOpm = cur.revenue ? cur.op / cur.revenue : null;
+      r.profitState = cur.op > 0
+        ? ((pOp != null && pOp <= 0) ? 'turnBlack' : 'stayBlack')   // 흑자 전환 / 흑자 유지
+        : ((pOp != null && pOp > 0) ? 'turnRed' : 'stayRed');       // 적자 전환 / 적자 지속
       // QoQ (최근 흐름)
       var pq2 = null;
       for (var k = li - 1; k >= 0; k--) if (list[k].revenue != null) { pq2 = list[k]; break; }
       if (pq2 && pq2.revenue > 0) r.revQoQ = cur.revenue / pq2.revenue - 1;
       if (pq2 && pq2.op != null && pq2.op > 0 && cur.op != null) r.opQoQ = cur.op / pq2.op - 1;
-      // 위험 신호: 재고·매출채권이 매출보다 빨리 증가 (YoY)
+      // 재고·채권 YoY (P-사이클 점검·위험 경보 겸용)
+      var inv = cur.inventory, invP = yoyPrevOf(list, li, 'inventory');
+      if (inv != null && invP != null && invP > 0) r.invYoY = inv / invP - 1;
+      var ar = cur.receivables, arP = yoyPrevOf(list, li, 'receivables');
+      if (ar != null && arP != null && arP > 0) r.arYoY = ar / arP - 1;
       if (r.screen.revYoY != null) {
-        var inv = cur.inventory, invP = yoyPrevOf(list, li, 'inventory');
-        if (inv != null && invP != null && invP > 0 && (inv / invP - 1) > r.screen.revYoY)
-          r.alerts.push('⚠ 재고자산 증가율 > 매출 증가율 (YoY)');
-        var ar = cur.receivables, arP = yoyPrevOf(list, li, 'receivables');
-        if (ar != null && arP != null && arP > 0 && (ar / arP - 1) > r.screen.revYoY)
-          r.alerts.push('⚠ 매출채권 증가율 > 매출 증가율 (YoY)');
+        if (r.invYoY != null && r.invYoY > r.screen.revYoY) r.alerts.push('⚠ 재고자산 증가율 > 매출 증가율 (YoY)');
+        if (r.arYoY != null && r.arYoY > r.screen.revYoY) r.alerts.push('⚠ 매출채권 증가율 > 매출 증가율 (YoY)');
       }
       // ① 실적 지속성: 영업이익 YoY 개선 연속 분기 수
       var streak = 0;
