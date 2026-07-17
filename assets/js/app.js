@@ -524,9 +524,9 @@
     if (scr) {
       var PS = {
         turnBlack: ['🔥 흑자 전환!', 'var(--green)', '#e6f6ee'],
-        stayBlack: ['흑자 유지', 'var(--green)', ''],
+        stayBlack: [pr.profitYoYKnown ? '흑자 유지' : '흑자', 'var(--green)', ''],
         turnRed: ['⚠ 적자 전환', 'var(--red)', '#fdecec'],
-        stayRed: ['적자 지속', 'var(--red)', '#fdecec']
+        stayRed: [pr.profitYoYKnown ? '적자 지속' : '적자', 'var(--red)', '#fdecec']
       };
       var ps = PS[pr.profitState] || PS.stayRed;
       function delta(label, ok, yoy) {
@@ -623,6 +623,30 @@
       });
       html += '</div>';
     }
+
+    // ── 원칙 가이드 (접이식) — 이익의 질 · 동일업종 포워드 PER ──
+    html += '<div style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">';
+    var qBadge = pr.qFlags.length ? ' <span style="color:var(--red);font-weight:700">⚠ 자동 점검에 걸린 항목 있음</span>' : '';
+    html += '<details style="margin-bottom:6px"><summary style="cursor:pointer;font-weight:700;font-size:13px">📎 이익의 질 — 정기보고서 어디를 보나' + qBadge + '</summary>' +
+      '<div class="small-note" style="line-height:1.9;margin-top:6px">' +
+      'DART 「<b>III. 재무에 관한 사항</b>」의 재무제표와 <b>주석</b>을 봅니다.<br>' +
+      '① <b>손익계산서</b>: 영업이익과 순이익을 나란히. <b>순이익이 영업이익보다 유난히 크면</b> 본업 밖에서 번 돈이 섞인 신호.' +
+      (pr.qNiOpGap != null ? ' <b>이 종목 순이익/영업이익 = ' + pr.qNiOpGap.toFixed(2) + '배' + (pr.qNiOpGap > 1.3 ? ' (⚠ 큼)' : ' (정상)') + '</b>' : '') + '<br>' +
+      '② <b>주석</b>: 「기타수익·영업외수익·금융수익」 내역에서 유형자산처분이익·보험금·보상금·지분법이익·환율효과가 크면 <b>일회성</b>(이번 분기만 있고 다음엔 없을 돈).<br>' +
+      '③ <b>현금흐름표</b>: 영업활동현금흐름(OCF)이 (+)인지.' +
+      (pr.ocfPos != null ? ' <b>이 종목 최근 4Q OCF 합 = ' + (pr.ocfPos ? '(+)' : '(−) ⚠') + '</b>' : '') +
+      ' 영업이익은 나는데 OCF가 계속 (−)면 장부상 흑자를 의심.<br>' +
+      '요약: “<b>영업이익에서 나왔고 · 큰 일회성이 없고 · 현금으로 들어오는가</b>” — 주석 확인 후 편집기에서 ②를 체크하세요.</div></details>';
+    html += '<details><summary style="cursor:pointer;font-weight:700;font-size:13px">📎 동일업종 PER 비교 — 포워드로, 직접 고른 경쟁사 2~3개와</summary>' +
+      '<div class="small-note" style="line-height:1.9;margin-top:6px">' +
+      '① <b>업종 평균은 성격 다른 회사가 섞여 왜곡</b>되기 쉬움 → 직접 고른 <b>경쟁사 2~3개</b>와 비교(여기에 그 경쟁사를 등록하면 위 비교표·필터⑤에 자동 반영).<br>' +
+      '② 보라는 건 과거가 아니라 <b>포워드 PER</b> = 시가총액 ÷ <b>내년 예상 순이익</b>. 컨센서스 있으면 네이버 「종목분석」 추정 PER, 소형주는 직접 추정.' +
+      ' 이 추정은 근거등급 <b>[추정]</b>으로 촉매/노트에 표시.<br>' +
+      '참고: 네이버 금융 종목페이지 「동일업종 PER·동일업종 비교」, KRX(data.krx.co.kr) 업종 PER, FnGuide(comp.fnguide.com).' +
+      (pr.forwardPer != null ? '<br><b>이 종목 포워드 PER = ' + pr.forwardPer.toFixed(1) + '배</b>' + (pr.peerMedianPer != null ? ' · 동종 ' + pr.peerCount + '곳 중앙값 ' + pr.peerMedianPer.toFixed(1) + '배 → ' + (pr.cheapVsPeers ? '<span style="color:var(--green);font-weight:700">싸다</span>' : '<span style="color:var(--red);font-weight:700">비싸다</span>') : '') : '<br><span style="color:var(--amber)">포워드 순이익을 입력하면 포워드 PER로 계산됩니다.</span>') +
+      '</div></details>';
+    html += '</div>';
+
     return html + '</div>';
   }
 

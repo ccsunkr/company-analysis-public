@@ -398,6 +398,7 @@
       // 표시용: 최근 분기 수준 + 흑자 상태(전환/유지/적자)
       r.latestRev = cur.revenue; r.latestOp = cur.op;
       r.latestOpm = cur.revenue ? cur.op / cur.revenue : null;
+      r.profitYoYKnown = pOp != null;
       r.profitState = cur.op > 0
         ? ((pOp != null && pOp <= 0) ? 'turnBlack' : 'stayBlack')   // 흑자 전환 / 흑자 유지
         : ((pOp != null && pOp > 0) ? 'turnRed' : 'stayRed');       // 적자 전환 / 적자 지속
@@ -453,7 +454,21 @@
     var debt = num(v.debt);
     if (debt != null && val.equity != null && val.equity > 0) r.debtRatio = debt / val.equity * 100;
     var ocfs = list.filter(function (x) { return x.ocf != null; }).slice(-4);
-    r.ocfPos = ocfs.length ? ocfs.reduce(function (a, x) { return a + x.ocf; }, 0) > 0 : null;
+    r.ocfSum = ocfs.length ? ocfs.reduce(function (a, x) { return a + x.ocf; }, 0) : null;
+    r.ocfPos = r.ocfSum != null ? r.ocfSum > 0 : null;
+
+    // ---- ② 이익의 질 자동 신호 (순이익 vs 영업이익 괴리 · 영업현금흐름) ----
+    // "이 이익이 영업이익에서 나왔고 / 큰 일회성이 없고 / 현금으로 들어오는가"
+    var t = val.trends || {};
+    var opT = t.ttmOp, niT = (val.netIncomeTTM != null ? val.netIncomeTTM : t.ttmNetIncome);
+    r.qNiOpGap = (opT != null && opT > 0 && niT != null) ? niT / opT : null; // 순이익/영업이익 (TTM)
+    r.qFlags = [];
+    if (r.qNiOpGap != null && r.qNiOpGap > 1.3)
+      r.qFlags.push('순이익이 영업이익의 ' + r.qNiOpGap.toFixed(1) + '배 — 영업외/일회성 이익(자산처분·보험금·지분법·환율) 주석 확인');
+    if (r.ocfPos === false)
+      r.qFlags.push('최근 4Q 영업현금흐름 합이 (−) — 장부상 흑자 의심(매출채권·재고 급증 여부 확인)');
+    // 자동으로 문제 없음: 괴리 정상 + OCF(+) 이면 통과 후보(수기 확인 전이라도 참고)
+    r.qAuto = (r.qNiOpGap == null || r.qNiOpGap <= 1.3) && r.ocfPos !== false;
 
     // ---- ⑤ 업종 내 밸류 비교 (내 종목들 중 같은 업종끼리만) ----
     if (peers && peers.length >= 2 && r.zonePer != null) {
@@ -471,15 +486,18 @@
     r.filters = [
       { no: 1, label: '실적 지속성 — 영업이익 YoY 개선 3분기+', auto: true,
         ok: r.opStreak != null ? r.opStreak >= 3 : null, note: r.opStreak != null ? '연속 ' + r.opStreak + '분기' : '데이터 부족' },
-      { no: 2, label: '이익의 질 — 일회성 손익 배제 확인', auto: false,
-        ok: p.quality ? true : null, note: '수기 확인 (편집기 체크)' },
+      { no: 2, label: '이익의 질 — 영업이익發·일회성 없음·현금 유입', auto: false,
+        ok: p.quality ? true : (r.qFlags.length ? false : null),
+        note: r.qFlags.length ? r.qFlags.join(' / ') : (r.qAuto ? '자동점검 이상 없음 — 주석만 최종 확인' : '수기 확인 (편집기 체크)') },
       { no: 3, label: '재무 안정성 — 부채비율<100% · OCF(+)', auto: true, ok: f3,
         note: (r.debtRatio != null ? '부채비율 ' + Math.round(r.debtRatio) + '%' : '부채총계 미입력') + (r.ocfPos != null ? ' · OCF(4Q) ' + (r.ocfPos ? '+' : '−') : '') },
       { no: 4, label: '마진 개선 추세 — OPM 최근4Q > 직전4Q', auto: true,
         ok: marginImproving(list), note: '' },
-      { no: 5, label: '밸류 — 동종(내 종목) 대비 포워드PER 중앙값 이하', auto: true,
+      { no: 5, label: '밸류 — 동종(내 종목) 대비 ' + (r.zoneIsForward ? '포워드' : '현재') + 'PER 중앙값 이하', auto: true,
         ok: r.cheapVsPeers != null ? r.cheapVsPeers : null,
-        note: r.peerMedianPer != null ? '동종 ' + r.peerCount + '곳 중앙값 ' + r.peerMedianPer.toFixed(1) + '배' : '비교할 동종 종목 없음' },
+        note: r.peerMedianPer != null
+          ? ('동종 ' + r.peerCount + '곳 ' + (r.zoneIsForward ? '포워드' : '현재') + 'PER 중앙값 ' + r.peerMedianPer.toFixed(1) + '배' + (r.zoneIsForward ? '' : ' · ⚠ 포워드 순이익 입력 시 포워드 기준으로 비교'))
+          : '비교할 동종 종목(같은 업종 2곳+) 없음 — 경쟁사 2~3개를 등록해 비교' },
       { no: 6, label: '촉매 존재 — 6~12개월 내 · 유효', auto: true,
         ok: r.catalystOK ? true : (r.catalysts.length ? false : null), note: r.catalysts.length ? '촉매 ' + r.catalysts.length + '건' : '촉매 미입력' },
       { no: 7, label: '주봉 바닥권 — 바닥 다진 뒤 매수', auto: false,
