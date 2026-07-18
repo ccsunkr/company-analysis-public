@@ -185,6 +185,15 @@
     };
   }
 
+  /* ---------- 매도 트리거 기본 5단계 (종목별로 편집, 자금 사슬 상류→하류) ---------- */
+  var DEFAULT_SELL_TRIGGERS = [
+    '전방/빅테크 FCF 둔화',        // 상류 — 자금 원천
+    'Capex(설비투자) 하향',        // 상류 — 주문 감소 예고
+    'OEM/ODM·중간재 둔화',        // 중류 — 제조 체인
+    '대장주 매출 미스',            // 하류 근접
+    '대장주 마진(OPM) 둔화'        // 하류 — 늦은 신호
+  ];
+
   /* ---------- 앵커 가중 프리셋 (주식 성격별) ---------- */
   // default(미지정)=논문 T-12 근거 PBR 0.5·배당 0.3·PER 0.2 (computeValuation의 FAIR_W)
   var WEIGHT_PRESETS = {
@@ -539,6 +548,7 @@
     annualFromQuarters: annualFromQuarters, computeTrends: computeTrends,
     computeValuation: computeValuation, computeBand: computeBand,
     computePrinciples: computePrinciples, unitToWon: unitToWon,
+    DEFAULT_SELL_TRIGGERS: DEFAULT_SELL_TRIGGERS,
     WEIGHT_PRESETS: WEIGHT_PRESETS, PRESET_LABELS: PRESET_LABELS, presetKeyOf: presetKeyOf,
     fmt: fmt, yearOf: yearOf, fullYear: fullYear, quarterNo: quarterNo, unitShort: unitShort
   };

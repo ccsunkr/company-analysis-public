@@ -19,6 +19,7 @@
         perBand: { low: null, avg: null, high: null }, pbrBand: { low: null, avg: null, high: null },
         targetPer: null, targetPbr: null, isExample: false },
       principles: { pq: '', catalysts: [], quality: false, chart: false },
+      sellTriggers: { flags: [false, false, false, false, false], labels: V.DEFAULT_SELL_TRIGGERS.slice(), memo: '' },
       commentary: []
     };
   }
@@ -99,6 +100,10 @@
     state.commentary = state.commentary || [];
     state.principles = state.principles || { pq: '', catalysts: [], quality: false, chart: false };
     state.principles.catalysts = state.principles.catalysts || [];
+    state.sellTriggers = state.sellTriggers || {};
+    if (!Array.isArray(state.sellTriggers.labels) || state.sellTriggers.labels.length !== 5) state.sellTriggers.labels = V.DEFAULT_SELL_TRIGGERS.slice();
+    if (!Array.isArray(state.sellTriggers.flags) || state.sellTriggers.flags.length !== 5) state.sellTriggers.flags = [false, false, false, false, false];
+    state.sellTriggers.memo = state.sellTriggers.memo || '';
     document.getElementById('company-select').value = c.id;
     syncFormFromState();
   }
@@ -159,8 +164,22 @@
     renderValHistory();
     renderBuybacks();
     renderCatalysts();
+    renderTriggerLabels();
     renderCommentary();
     refresh();
+  }
+
+  /* ---------- 매도 트리거 5단계 라벨 (종목별) ---------- */
+  function renderTriggerLabels() {
+    var box = document.getElementById('trig-labels'); if (!box) return;
+    var num = ['①', '②', '③', '④', '⑤'], zone = ['상류', '상류', '중류', '하류', '하류'];
+    box.innerHTML = state.sellTriggers.labels.map(function (lbl, i) {
+      return '<div class="field" style="margin-bottom:6px"><label style="font-weight:400">' + num[i] + ' <span class="sub">(' + zone[i] + ')</span></label>' +
+        '<input data-trigi="' + i + '" type="text" value="' + escAttr(lbl || '') + '" placeholder="' + escAttr(V.DEFAULT_SELL_TRIGGERS[i]) + '"></div>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('[data-trigi]'), function (inp) {
+      inp.addEventListener('input', function () { state.sellTriggers.labels[+inp.getAttribute('data-trigi')] = inp.value; });
+    });
   }
 
   /* ---------- 촉매 (숫자×촉매의 촉매 축) ---------- */
@@ -521,6 +540,18 @@
       if (cats.length) c.principles.catalysts = cats;
       if (pr.quality) c.principles.quality = true;
       if (pr.chart) c.principles.chart = true;
+    }
+    // 매도 트리거 (라벨이 기본값과 다르거나, 점등·메모가 있으면 저장)
+    var stg = state.sellTriggers || {};
+    var labels = (stg.labels || []).map(function (x) { return (x || '').trim(); });
+    var customLabels = labels.some(function (x, i) { return x && x !== V.DEFAULT_SELL_TRIGGERS[i]; });
+    var anyFlag = (stg.flags || []).some(Boolean);
+    if (customLabels || anyFlag || (stg.memo || '').trim()) {
+      c.sellTriggers = {
+        flags: (stg.flags || [false, false, false, false, false]).slice(0, 5).map(Boolean),
+        labels: labels.map(function (x, i) { return x || V.DEFAULT_SELL_TRIGGERS[i]; }),
+        memo: (stg.memo || '').trim()
+      };
     }
     return c;
   }
