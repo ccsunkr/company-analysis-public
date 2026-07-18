@@ -737,8 +737,11 @@
         var rr = r.reported; rev = convUnit(rr.revenue, unit); op = convUnit(rr.op, unit);
         [['ocf', 'OCF'], ['inventory', '재고자산'], ['receivables', '매출채권'], ['cogs', '매출원가'], ['netIncome', '순이익']].forEach(function (p) { if (rr[p[0]] == null) miss.push(p[1]); });
       }
-      var warn = miss.length ? '<tr><td colspan="5" style="padding:0 6px 5px;text-align:left"><span class="small-note" style="color:var(--amber)">⚠ ' + esc(r.__file || '') + ': ' + miss.join('·') + ' 미추출(적용 후 수기 보완)</span></td></tr>' : '';
-      return '<tr><td style="text-align:left">' + esc(r.__file || '') + '</td><td>' + type + '</td><td>' + esc(period) + '</td><td>' + fnum(rev) + '</td><td>' + fnum(op) + '</td></tr>' + warn;
+      var notes2 = miss.length ? [miss.join('·') + ' 미추출(적용 후 수기 보완)'] : [];
+      (r.warnings || []).forEach(function (w) { notes2.push(w); });
+      var warn = notes2.length ? '<tr><td colspan="5" style="padding:0 6px 5px;text-align:left"><span class="small-note" style="color:var(--amber)">⚠ ' + esc(r.__file || '') + ': ' + esc(notes2.join(' / ')) + '</span></td></tr>' : '';
+      var amendTag = r.amended ? ' <span class="example-badge" style="background:#e8f1fb;color:#2e75b6">정정' + (r.amendDate ? ' ' + esc(r.amendDate) : '') + '</span>' : '';
+      return '<tr><td style="text-align:left">' + esc(r.__file || '') + amendTag + '</td><td>' + type + '</td><td>' + esc(period) + '</td><td>' + fnum(rev) + '</td><td>' + fnum(op) + '</td></tr>' + warn;
     }).join('');
     var dated = list.slice().sort(byDate);
     var shRes = dated.filter(function (r) { return numOrNull(r.shares) != null; }).pop();
@@ -756,8 +759,20 @@
     document.getElementById('btn-dart-cancel').addEventListener('click', function () { document.getElementById('dart-preview').innerHTML = ''; });
   }
   function fnum(v) { return v == null ? '–' : v.toLocaleString('ko-KR'); }
-  function byOrder(a, b) { return ((a.year || 0) * 10 + (a.isAnnual ? 9 : a.quarter)) - ((b.year || 0) * 10 + (b.isAnnual ? 9 : b.quarter)); }
-  function byDate(a, b) { return String(a.endDate || '').localeCompare(String(b.endDate || '')); }
+  // 같은 (연·분기)면 정정보고서를 뒤에 둬서 원본을 덮어쓰게 한다 (정정 여러 건은 정정일 순)
+  function amendRank(r) { return r.amended ? 1 : 0; }
+  function tieAmended(a, b) {
+    var d = amendRank(a) - amendRank(b);
+    if (d) return d;
+    return String(a.amendDate || '').localeCompare(String(b.amendDate || ''));
+  }
+  function byOrder(a, b) {
+    var d = ((a.year || 0) * 10 + (a.isAnnual ? 9 : a.quarter)) - ((b.year || 0) * 10 + (b.isAnnual ? 9 : b.quarter));
+    return d || tieAmended(a, b);
+  }
+  function byDate(a, b) {
+    return String(a.endDate || '').localeCompare(String(b.endDate || '')) || tieAmended(a, b);
+  }
 
   // 같은 해 특정 분기 행 찾기 (라벨 스타일 무관)
   function findQ(year, q) {
@@ -774,8 +789,10 @@
   function applyBatch(list) {
     var unit = state.unit || '조원';
     document.getElementById('dart-preview').innerHTML = '';
-    var quarterly = list.filter(function (r) { return !r.isAnnual; }).sort(function (a, b) { return (a.year * 10 + a.quarter) - (b.year * 10 + b.quarter); });
-    var annual = list.filter(function (r) { return r.isAnnual; }).sort(function (a, b) { return a.year - b.year; });
+    var quarterly = list.filter(function (r) { return !r.isAnnual; })
+      .sort(function (a, b) { return ((a.year * 10 + a.quarter) - (b.year * 10 + b.quarter)) || tieAmended(a, b); });
+    var annual = list.filter(function (r) { return r.isAnnual; })
+      .sort(function (a, b) { return (a.year - b.year) || tieAmended(a, b); });
     quarterly.forEach(function (r) { applyQuarterlyToState(r, unit); });
     var q4 = [];
     annual.forEach(function (r) { q4 = q4.concat(applyAnnualToState(r, unit)); });

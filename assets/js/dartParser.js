@@ -75,6 +75,13 @@
     if (!period) { res.error = '보고서 기간(제N기 N분기)을 찾지 못했습니다.'; return res; }
     res.year = period.year; res.quarter = period.quarter; res.endDate = period.endDate;
     res.fiscalNo = period.fiscalNo; res.connected = connected;
+    res.startMonth = period.startMonth; res.months = period.months;
+    // 정정보고서 — 편집기가 같은 분기의 원본보다 나중에 적용한다
+    var am = detectAmended(txt);
+    res.amended = !!(am && am.amended);
+    res.amendDate = am ? am.amendDate : '';
+    if (period.nonCalendarFY)
+      res.warnings.push('비(非)12월 결산으로 보임(기간 ' + period.startMonth + '월 시작) — 분기 라벨은 회계연도 기준');
     res.cumulativeCF = period.quarter > 1; // 반기/3분기 현금흐름표는 누적(YTD)
 
     // pdf.js는 페이지 경계에서 텍스트 순서를 재배열하므로 '블록 슬라이싱'이 불안정.
@@ -235,18 +242,48 @@
     return { value: null, label: null };
   }
 
+  /* 보고서 표지의 '누적 기간(시작~종료)'으로 분기를 계산.
+   *   개월수 = ((종료월 − 시작월 + 12) % 12) + 1,  분기 = round(개월수 / 3)
+   *   → 12월 결산: 01~03=1Q, 01~06=반기(2), 01~09=3Q, 01~12=연간(4)
+   *   → 3월 결산 등 비12월 결산도 회계연도 기준 분기로 정확히 산출(라벨은 회계분기 기준임을 경고).
+   * (종전엔 종료월÷3 반올림이라 1월 종료=0분기, 비12월 결산은 분기가 밀렸음) */
+  function periodFrom(startY, startM, endY, endM, endD, fiscalNo) {
+    var months = ((endM - startM + 12) % 12) + 1;
+    var q = Math.round(months / 3);
+    if (q < 1) q = 1; if (q > 4) q = 4;
+    return {
+      fiscalNo: fiscalNo == null ? null : fiscalNo,
+      year: endY, quarter: q,
+      endDate: pad4(endY) + '-' + pad2(endM) + '-' + pad2(endD),
+      startMonth: startM, months: months,
+      nonCalendarFY: startM !== 1 && months !== 12 ? true : (months === 12 && endM !== 12)
+    };
+  }
+  function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
+  function pad4(n) { return String(n); }
+
   function detectPeriod(txt) {
-    // "제 58 기 1분기 2026.01.01 부터 2026.03.31 까지" 또는 날짜범위
-    var m = txt.match(/제\s*(\d+)\s*기[\s\S]{0,14}?(\d{4})\.(\d{2})\.\d{2}\s*부터\s*(\d{4})\.(\d{2})\.(\d{2})\s*까지/);
-    if (!m) {
-      // 표지형: "2026.01.01 부터 ... 2026.03.31 까지"
-      m = txt.match(/(\d{4})\.(\d{2})\.\d{2}\s*부터[\s\S]{0,20}?(\d{4})\.(\d{2})\.(\d{2})\s*까지/);
-      if (!m) return null;
-      var endM2 = parseInt(m[4], 10);
-      return { fiscalNo: null, year: parseInt(m[3], 10), quarter: Math.round(endM2 / 3), endDate: m[3] + '-' + m[4] + '-' + m[5] };
+    // "제 58 기 1분기 2026.01.01 부터 2026.03.31 까지"
+    var m = txt.match(/제\s*(\d+)\s*기[\s\S]{0,14}?(\d{4})\.(\d{2})\.(\d{2})\s*부터\s*(\d{4})\.(\d{2})\.(\d{2})\s*까지/);
+    if (m) {
+      return periodFrom(parseInt(m[2], 10), parseInt(m[3], 10),
+                        parseInt(m[5], 10), parseInt(m[6], 10), parseInt(m[7], 10), parseInt(m[1], 10));
     }
-    var endM = parseInt(m[5], 10);
-    return { fiscalNo: parseInt(m[1], 10), year: parseInt(m[4], 10), quarter: Math.round(endM / 3), endDate: m[4] + '-' + m[5] + '-' + m[6] };
+    // 표지형: "2026.01.01 부터 ... 2026.03.31 까지"
+    m = txt.match(/(\d{4})\.(\d{2})\.(\d{2})\s*부터[\s\S]{0,20}?(\d{4})\.(\d{2})\.(\d{2})\s*까지/);
+    if (!m) return null;
+    return periodFrom(parseInt(m[1], 10), parseInt(m[2], 10),
+                      parseInt(m[4], 10), parseInt(m[5], 10), parseInt(m[6], 10), null);
+  }
+
+  /* 정정보고서 감지 — 같은 분기의 원본보다 '나중에' 적용해야 최신 수치가 남는다. */
+  function detectAmended(txt) {
+    var head = txt.slice(0, 4000); // 표지 영역
+    if (!/정\s*정/.test(head)) return null;
+    var isAmend = /정정신고|정정보고서|\[\s*기재정정\s*\]|\[\s*첨부정정\s*\]|\[\s*정정\s*\]/.test(head);
+    if (!isAmend) return null;
+    var d = head.match(/정정[^0-9]{0,20}(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})/);
+    return { amended: true, amendDate: d ? (d[1] + '-' + pad2(d[2]) + '-' + pad2(d[3])) : '' };
   }
 
   global.DartParser = { parseDartReport: parseDartReport, _toNum: toNum };
