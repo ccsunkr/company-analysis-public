@@ -214,6 +214,52 @@ def naver_quote(code):
             'eps': to_num(m.get('eps')), 'bps': to_num(m.get('bps')), 'source': 'naver'}
 
 
+# ---------- stockanalysis.com (거시 AI 자금 사슬 트리거용) ----------
+
+def sa_nums(html, key):
+    m = re.search(r'[,{]' + re.escape(key) + r':\[([^\]]*)\]', html)
+    if not m:
+        return None
+    out = []
+    for s in m.group(1).split(','):
+        s = s.strip()
+        if s in ('', 'null'):
+            out.append(None)
+        else:
+            try:
+                out.append(float(s))
+            except ValueError:
+                out.append(None)
+    return out
+
+
+def sa_dates(html):
+    m = re.search(r'[,{]datekey:\[([^\]]*)\]', html)
+    if not m:
+        return None
+    return [x.strip().strip('"') for x in m.group(1).split(',')]
+
+
+def sa_fetch_page(ticker, part):
+    base = 'https://stockanalysis.com/stocks/' + ticker.lower() + '/financials/'
+    url = base + ('cash-flow-statement/?p=quarterly' if part == 'cashflow' else '?p=quarterly')
+    _, _, body = http_get(url, timeout=25)
+    return body.decode('utf-8', 'replace')
+
+
+def sa_data(ticker, parts):
+    res = {'ticker': ticker.upper()}
+    if parts in ('income', 'both'):
+        h = sa_fetch_page(ticker, 'income')
+        res['income'] = {'dates': sa_dates(h), 'revenue': sa_nums(h, 'revenue'),
+                         'operatingMargin': sa_nums(h, 'operatingMargin')}
+    if parts in ('cashflow', 'both'):
+        h = sa_fetch_page(ticker, 'cashflow')
+        res['cashflow'] = {'dates': sa_dates(h), 'capex': sa_nums(h, 'capex'),
+                           'fcf': sa_nums(h, 'fcf'), 'ocf': sa_nums(h, 'ncfo')}
+    return res
+
+
 # ---------- HTTP 핸들러 ----------
 
 class Handler(BaseHTTPRequestHandler):
@@ -260,6 +306,17 @@ class Handler(BaseHTTPRequestHandler):
             # ---- 프록시 확인 (편집기 자동감지용) ----
             if get('ping'):
                 return self._json({'ok': True, 'service': 'dart-local-proxy'})
+
+            # ---- stockanalysis.com 거시 트리거 데이터 ----
+            if get('sa'):
+                tk = get('sa')
+                if not re.fullmatch(r'[A-Za-z.]{1,8}', tk):
+                    return self._json({'error': '잘못된 티커'}, 400)
+                parts = get('parts') or 'both'
+                try:
+                    return self._json(sa_data(tk, parts))
+                except Exception as e:
+                    return self._json({'error': str(e), 'ticker': tk.upper()}, 502)
 
             # ---- OpenDART 중계 ----
             dart_path = get('dartPath')

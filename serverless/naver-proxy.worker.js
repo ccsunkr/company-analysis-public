@@ -170,6 +170,55 @@ async function handleStore(request, url, env) {
   return json({ error: '알 수 없는 store 동작: ' + action }, 400);
 }
 
+/* ---------- stockanalysis.com (거시 AI 자금 사슬 트리거용) ----------
+ * GET ?sa=NVDA&parts=income|cashflow|both  → 분기 시계열(최신순) + datekey
+ *   income  : revenue, operatingMargin
+ *   cashflow: capex, fcf, ocf(ncfo)
+ */
+function saNums(html, key) {
+  const m = html.match(new RegExp('[,{]' + key + ':\\[([^\\]]*)\\]'));
+  if (!m) return null;
+  return m[1].split(',').map(s => {
+    s = s.trim();
+    if (s === '' || s === 'null') return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  });
+}
+function saDates(html) {
+  const m = html.match(/[,{]datekey:\[([^\]]*)\]/);
+  if (!m) return null;
+  return m[1].split(',').map(s => s.replace(/"/g, '').trim());
+}
+async function saPage(ticker, part) {
+  const base = 'https://stockanalysis.com/stocks/' + ticker.toLowerCase() + '/financials/';
+  const url = base + (part === 'cashflow' ? 'cash-flow-statement/?p=quarterly' : '?p=quarterly');
+  const r = await fetch(url, { headers: { 'User-Agent': UA } });
+  if (!r.ok) throw new Error('stockanalysis ' + ticker + ' HTTP ' + r.status);
+  return r.text();
+}
+async function handleSa(url) {
+  const ticker = (url.searchParams.get('sa') || '').trim();
+  if (!/^[A-Za-z.]{1,8}$/.test(ticker)) return json({ error: '잘못된 티커' }, 400);
+  const parts = url.searchParams.get('parts') || 'both';
+  const res = { ticker: ticker.toUpperCase() };
+  const jobs = [];
+  if (parts === 'income' || parts === 'both') {
+    jobs.push(saPage(ticker, 'income').then(h => {
+      res.income = { dates: saDates(h), revenue: saNums(h, 'revenue'), operatingMargin: saNums(h, 'operatingMargin') };
+    }));
+  }
+  if (parts === 'cashflow' || parts === 'both') {
+    jobs.push(saPage(ticker, 'cashflow').then(h => {
+      res.cashflow = { dates: saDates(h), capex: saNums(h, 'capex'), fcf: saNums(h, 'fcf'), ocf: saNums(h, 'ncfo') };
+    }));
+  }
+  await Promise.all(jobs);
+  return new Response(JSON.stringify(res), {
+    headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS, 'Cache-Control': 'public, max-age=21600' }
+  });
+}
+
 /* ---------- OpenDART 중계 ---------- */
 const DART_PATHS = new Set(['corpCode', 'fnlttSinglAcnt', 'fnlttSinglAcntAll', 'stockTotqySttus', 'alotMatter', 'company']);
 
@@ -208,6 +257,12 @@ async function handle(request, env) {
   // 공유 저장소 요청
   if (url.searchParams.get('store')) {
     try { return await handleStore(request, url, env); }
+    catch (e) { return json({ error: String(e && e.message || e) }, 502); }
+  }
+
+  // stockanalysis.com (거시 트리거) 요청
+  if (url.searchParams.get('sa')) {
+    try { return await handleSa(url); }
     catch (e) { return json({ error: String(e && e.message || e) }, 502); }
   }
 

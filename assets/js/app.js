@@ -92,6 +92,25 @@
     if (!a) return '';
     return '<div style="border-left:4px solid ' + a.col + ';background:' + a.bg + ';padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:13px;font-weight:600;color:' + a.col + '">' + a.msg + '</div>';
   }
+  /* ---------- 거시 매도 트리거 (AI 자금 사슬 — 모든 종목 공통) ---------- */
+  var macroData = null;   // stockanalysis 데이터 맵 (로드되면 채움)
+  var macroEval = null;   // evaluate 결과
+  function macroBase() {
+    return (window.SITE_CONFIG && SITE_CONFIG.sharedUrl) ||
+      (window.Store && Store.url()) ||
+      (function () { try { return (localStorage.getItem('companyAnalysis.naverProxy') || '').trim(); } catch (e) { return ''; } })() || '';
+  }
+  function refreshMacroEval() { macroEval = window.Macro ? Macro.evaluate(macroData || {}) : null; }
+  function macroBanner() {
+    if (!macroEval || !macroEval.count) return '';
+    var up = macroEval.upstream;
+    var col = up ? 'var(--red)' : 'var(--amber)', bg = up ? '#fdecec' : '#fff6e6';
+    var msg = up
+      ? '🌐🔻 거시 매도 트리거 ' + macroEval.count + '/5 — <b>AI 자금 사슬 상류(①②) 둔화</b>. 모든 관련주 비중 축소 검토 (⑤까지 기다리면 늦음).'
+      : '🌐 거시 매도 트리거 ' + macroEval.count + '/5 점등 (하류). 상류(①②)로 번지는지 점검.';
+    return '<div style="border-left:4px solid ' + col + ';background:' + bg + ';padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:13px;font-weight:600;color:' + col + '">' + msg + '</div>';
+  }
+
   // 종목별 트리거 상태 저장: 공유본이면 공유 저장소, 아니면 로컬 오버라이드
   function persistCompany(company) {
     if (company.__shared && window.Store && Store.enabled()) {
@@ -185,15 +204,18 @@
       '<button class="btn sm" id="btn-view-cards" style="border:0;border-radius:0;' + (mode === 'cards' ? 'background:var(--navy);color:#fff' : '') + '">카드</button>' +
       '<button class="btn sm" id="btn-view-table" style="border:0;border-radius:0;' + (mode === 'table' ? 'background:var(--navy);color:#fff' : '') + '">비교표</button></span>';
     app.innerHTML =
+      macroBanner() +
       '<div class="gallery-head"><h2>분석 기업 ' + companies.length + '</h2>' +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' + sharedStatusHtml() + toggle +
       '<a class="btn primary sm" href="editor.html">＋ 기업 추가 / 편집</a></div></div>' +
+      macroCard() +
       (companies.length
         ? (mode === 'table' ? compareTable(companies) : '<div class="grid">' + cards + '</div>')
         : emptyState()) + disclaimer();
     Array.prototype.forEach.call(app.querySelectorAll('[data-id]'), function (el) {
       el.addEventListener('click', function () { location.hash = '#/' + el.getAttribute('data-id'); });
     });
+    bindMacroCard();
     var bvc = document.getElementById('btn-view-cards');
     if (bvc) bvc.addEventListener('click', function () { setViewMode('cards'); renderGallery(loadCompanies()); });
     var bvt = document.getElementById('btn-view-table');
@@ -206,6 +228,68 @@
       });
     });
     bindStoreKeyBtn();
+  }
+
+  /* ---------- 거시 매도 트리거 카드 (AI 자금 사슬, 자동 판정) ---------- */
+  function macroCard() {
+    var loaded = !!macroData;
+    var ev = macroEval;
+    var when = window.Macro ? Macro.cachedAt() : 0;
+    var head = '<details class="section" style="margin-top:0"' + (ev && ev.count ? ' open' : '') + '>' +
+      '<summary style="cursor:pointer;font-weight:800;font-size:15px;list-style:none">🌐 거시 매도 트리거 — AI 자금 사슬 ' +
+      '<span class="small-note" style="font-weight:400">— ' + (loaded ? '점등 ' + ev.count + '/5' : '미수집') +
+      ' · stockanalysis.com 실적 자동 판정 · 모든 관련주 공통' + (when ? ' · ' + new Date(when).toLocaleString('ko-KR') : '') + '</span></summary>';
+    var body = '<p class="hint" style="margin-top:8px">돈은 상류(하이퍼스케일러 FCF·Capex)→중류(파운드리)→하류(엔비디아)로 흐릅니다. ' +
+      '<b>①② 점등 시부터 비중 축소</b>(⑤까지 기다리면 늦음). 실적으로 자동 판정하되, 가이던스 등으로 미리 알면 각 항목을 <b>수동 지정</b>할 수 있습니다.</p>';
+    if (!loaded) {
+      body += '<button class="btn primary sm" id="macro-load" type="button">거시 지표 수집</button>' +
+        '<span class="small-note" id="macro-status" style="margin-left:10px"></span>';
+      return head + body + '</details>';
+    }
+    body += '<div style="display:flex;flex-direction:column;gap:6px;max-width:640px">';
+    ev.triggers.forEach(function (d, i) {
+      var on = d.on;
+      var srcTag = d.override != null ? '수동' : '자동';
+      body += '<div style="display:flex;align-items:center;gap:8px;border:1px solid ' + (on ? 'var(--red)' : 'var(--line)') + ';border-radius:8px;padding:6px 10px;' + (on ? 'background:#fdecec' : '') + '">' +
+        '<b style="color:' + (on ? 'var(--red)' : 'var(--ink-2)') + ';min-width:74px">' + d.no + ' ' + (on ? '● 점등' : '○') + '</b>' +
+        '<div style="flex:1"><b>' + esc(d.label) + '</b> <span class="sub">' + esc(d.zone) + ' · ' + esc(d.who) + '</span>' +
+        '<div class="small-note">' + esc(d.detail) + ' <span style="color:' + (d.override != null ? 'var(--amber)' : 'var(--grey)') + '">[' + srcTag + ']</span></div></div>' +
+        '<button class="btn sm" data-macro-tog="' + i + '" title="자동/수동 전환">' + (d.override != null ? '자동으로' : (on ? '끄기' : '켜기')) + '</button></div>';
+    });
+    body += '</div>';
+    body += '<div class="toolbar" style="margin-top:10px"><button class="btn sm" id="macro-refresh" type="button">↻ 최신 실적 다시 수집</button>' +
+      '<a class="btn sm" href="https://stockanalysis.com/stocks/nvda/financials/" target="_blank" rel="noopener">NVDA 실적 원본 ↗</a>' +
+      '<span class="small-note" id="macro-status"></span></div>';
+    return head + body + '</details>';
+  }
+  function bindMacroCard() {
+    var loadBtn = document.getElementById('macro-load');
+    var refBtn = document.getElementById('macro-refresh');
+    var st = function () { return document.getElementById('macro-status'); };
+    function doLoad(force) {
+      if (!window.Macro) return;
+      if (force) Macro.clearCache();
+      var base = macroBase();
+      if (!base) { if (st()) st().innerHTML = '<span style="color:var(--red)">프록시/공유 서버 URL이 필요합니다 (config.js 또는 편집기 설정).</span>'; return; }
+      if (st()) st().textContent = '수집 중…';
+      Macro.load(base, function (m) { if (st()) st().textContent = m; }).then(function (map) {
+        macroData = map; refreshMacroEval(); renderGallery(loadCompanies());
+      }).catch(function (e) {
+        if (st()) st().innerHTML = '<span style="color:var(--red)">수집 실패: ' + esc(e.message || e) + '</span>';
+      });
+    }
+    if (loadBtn) loadBtn.addEventListener('click', function () { doLoad(false); });
+    if (refBtn) refBtn.addEventListener('click', function () { doLoad(true); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-macro-tog]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var i = +btn.getAttribute('data-macro-tog');
+        var d = macroEval.triggers[i];
+        // 자동→(반대로 수동 고정)→자동 순환
+        if (d.override == null) Macro.setOverride(i, !(d.auto === true));
+        else Macro.setOverride(i, null);
+        refreshMacroEval(); var y = window.scrollY; renderGallery(loadCompanies()); window.scrollTo(0, y);
+      });
+    });
   }
 
   /* ---------- 매도 트리거 5단계 보드 (종목별 — 상세 페이지) ---------- */
@@ -378,6 +462,7 @@
 
     app.innerHTML =
       '<a class="back-link" href="#">← 목록으로</a>' +
+      macroBanner() +
       triggerBannerFor(company) +
       detailHead(company, val) +
       principlesSection(pr, company, val) +
@@ -864,6 +949,13 @@
   function clamp(v) { return Math.max(0, Math.min(100, v)); }
 
   function route() {
+    // 거시 트리거: 캐시가 있으면 최초 1회 자동 반영 (없으면 카드의 '수집' 버튼)
+    if (macroData === null && window.Macro) {
+      var cachedMap = null;
+      try { var c = JSON.parse(localStorage.getItem('companyAnalysis.macroData') || 'null'); if (c && c.ts && (Date.now() - c.ts) < 6 * 3600 * 1000) cachedMap = c.data; } catch (e) {}
+      macroData = cachedMap || false; // false = 미로드(캐시 없음)
+      if (macroData) refreshMacroEval();
+    }
     // 공유 저장소가 설정돼 있으면 최초 1회 로드 후 렌더
     if (window.Store && Store.enabled() && sharedCompanies === null) {
       Store.list()
