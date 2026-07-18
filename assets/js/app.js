@@ -67,6 +67,50 @@
   var sharedCompanies = null; // null=미로드, {}=로드됨(비어있음 포함)
   var sharedError = '';
 
+  /* ---------- 매도 트리거 5단계 (거시 조기경보 — 시장 전체 공통) ----------
+   * 자금 사슬 상류→하류. ①② 점등 시부터 비중 축소(⑤까지 기다리면 늦음). */
+  var SELL_TRIGGERS = [
+    { t: '① 빅테크 FCF 둔화', d: '상류 — 자금의 원천이 마름' },
+    { t: '② Capex 하향', d: '상류 — 투자 축소 = 주문 감소 예고' },
+    { t: '③ OEM/ODM 둔화', d: '중류 — 제조 체인 둔화' },
+    { t: '④ 대장주 매출 미스', d: '하류 근접 — 실적으로 확인됨' },
+    { t: '⑤ 대장주 OPM 둔화', d: '하류 — 마진까지 꺾임(늦은 신호)' }
+  ];
+  var TRIG_LS = 'companyAnalysis.sellTriggers';
+  var sellTriggers = null; // {flags:[5], memo, updated}
+  function normTriggers(o) {
+    o = o || {};
+    var f = Array.isArray(o.flags) ? o.flags.slice(0, 5) : [];
+    while (f.length < 5) f.push(false);
+    return { flags: f.map(Boolean), memo: o.memo || '', updated: o.updated || '' };
+  }
+  function localTriggers() { try { return normTriggers(JSON.parse(localStorage.getItem(TRIG_LS) || '{}')); } catch (e) { return normTriggers(); } }
+  function loadTriggers(cb) {
+    if (window.Store && Store.enabled()) {
+      Store.triggersGet().then(function (o) { sellTriggers = normTriggers(o); })
+        .catch(function () { sellTriggers = localTriggers(); }).then(cb);
+    } else { sellTriggers = localTriggers(); if (cb) cb(); }
+  }
+  function saveTriggers() {
+    sellTriggers.updated = new Date().toISOString().slice(0, 10);
+    try { localStorage.setItem(TRIG_LS, JSON.stringify(sellTriggers)); } catch (e) {}
+    if (window.Store && Store.enabled()) Store.triggersPut(sellTriggers).catch(function () {});
+  }
+  function triggerAlert() {
+    var f = (sellTriggers && sellTriggers.flags) || [];
+    var n = f.filter(Boolean).length;
+    if (!n) return null;
+    var upstream = f[0] || f[1];
+    return upstream
+      ? { n: n, col: 'var(--red)', bg: '#fdecec', msg: '🔻 매도 트리거 ' + n + '/5 점등 — <b>상류(빅테크 FCF·Capex) 둔화</b>. 원칙: ①② 점등 시부터 <b>비중 축소 시작</b> (⑤까지 기다리면 늦음).' }
+      : { n: n, col: 'var(--amber)', bg: '#fff6e6', msg: '⚠ 매도 트리거 ' + n + '/5 점등 (하류). 상류(①②)까지 번지는지 점검.' };
+  }
+  function triggerBanner() {
+    var a = triggerAlert();
+    if (!a) return '';
+    return '<div style="border-left:4px solid ' + a.col + ';background:' + a.bg + ';padding:8px 14px;border-radius:6px;margin-bottom:12px;font-size:13px;font-weight:600;color:' + a.col + '">' + a.msg + '</div>';
+  }
+
   function loadCompanies() {
     var base = (window.COMPANIES || []).slice();
     var overrides = {};
@@ -147,15 +191,18 @@
       '<button class="btn sm" id="btn-view-cards" style="border:0;border-radius:0;' + (mode === 'cards' ? 'background:var(--navy);color:#fff' : '') + '">카드</button>' +
       '<button class="btn sm" id="btn-view-table" style="border:0;border-radius:0;' + (mode === 'table' ? 'background:var(--navy);color:#fff' : '') + '">비교표</button></span>';
     app.innerHTML =
+      triggerBanner() +
       '<div class="gallery-head"><h2>분석 기업 ' + companies.length + '</h2>' +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' + sharedStatusHtml() + toggle +
       '<a class="btn primary sm" href="editor.html">＋ 기업 추가 / 편집</a></div></div>' +
+      sellTriggerBoard() +
       (companies.length
         ? (mode === 'table' ? compareTable(companies) : '<div class="grid">' + cards + '</div>')
         : emptyState()) + disclaimer();
     Array.prototype.forEach.call(app.querySelectorAll('[data-id]'), function (el) {
       el.addEventListener('click', function () { location.hash = '#/' + el.getAttribute('data-id'); });
     });
+    bindSellTriggerBoard();
     var bvc = document.getElementById('btn-view-cards');
     if (bvc) bvc.addEventListener('click', function () { setViewMode('cards'); renderGallery(loadCompanies()); });
     var bvt = document.getElementById('btn-view-table');
@@ -168,6 +215,43 @@
       });
     });
     bindStoreKeyBtn();
+  }
+
+  /* ---------- 매도 트리거 5단계 보드 (전역·공유) ---------- */
+  function sellTriggerBoard() {
+    var st = sellTriggers || normTriggers();
+    var f = st.flags;
+    var lit = f.filter(Boolean).length;
+    var open = lit > 0 ? ' open' : '';
+    var shared = (window.Store && Store.enabled());
+    var chips = SELL_TRIGGERS.map(function (o, i) {
+      var on = !!f[i];
+      return '<button class="btn sm" data-trig="' + i + '" title="' + esc(o.d) + '" ' +
+        'style="text-align:left;' + (on ? 'background:var(--red);color:#fff;border-color:var(--red)' : '') + '">' +
+        (on ? '● ' : '○ ') + esc(o.t) + '</button>';
+    }).join(' ');
+    return '<details class="section" style="margin-top:0"' + open + '>' +
+      '<summary style="cursor:pointer;font-weight:800;font-size:15px;list-style:none">🔻 매도 트리거 5단계 (거시 조기경보) ' +
+      '<span class="small-note" style="font-weight:400">— 점등 ' + lit + '/5 · 자금 사슬 상류→하류 · 클릭해 토글' +
+      (shared ? ' · ☁ 공유' : ' · 이 브라우저') + (st.updated ? ' · 갱신 ' + esc(st.updated) : '') + '</span></summary>' +
+      '<p class="hint" style="margin-top:8px">돈은 상류(빅테크 FCF·Capex)→중류(제조)→하류(소재·부품)로 흐릅니다. ' +
+      '<b>①② 점등 시부터 비중 축소</b>를 시작하세요(⑤까지 기다리면 늦음). 시장 전체에 적용되는 공통 신호입니다.</p>' +
+      '<div style="display:flex;flex-direction:column;gap:6px;max-width:520px">' + chips + '</div>' +
+      '<div class="field" style="margin-top:10px;max-width:520px"><label>메모 (근거·날짜 — 예: "빅테크 3Q Capex 가이던스 하향")</label>' +
+      '<textarea id="trig-memo" rows="2">' + esc(st.memo || '') + '</textarea></div>' +
+      '</details>';
+  }
+  function bindSellTriggerBoard() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-trig]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var i = +btn.getAttribute('data-trig');
+        sellTriggers.flags[i] = !sellTriggers.flags[i];
+        saveTriggers();
+        renderGallery(loadCompanies());
+      });
+    });
+    var memo = document.getElementById('trig-memo');
+    if (memo) memo.addEventListener('change', function () { sellTriggers.memo = memo.value; saveTriggers(); });
   }
 
   /* ---------- 비교표 — 내가 알아본 종목끼리, 같은 업종끼리 (핵심: PER·포워드PER·ROE·영업이익률) ---------- */
@@ -299,6 +383,7 @@
 
     app.innerHTML =
       '<a class="back-link" href="#">← 목록으로</a>' +
+      triggerBanner() +
       detailHead(company, val) +
       principlesSection(pr, company, val) +
       valuationSection(company, val) +
@@ -782,6 +867,8 @@
   function clamp(v) { return Math.max(0, Math.min(100, v)); }
 
   function route() {
+    // 매도 트리거(거시 경보)는 처음 한 번 로드
+    if (sellTriggers === null) { loadTriggers(route); return; }
     // 공유 저장소가 설정돼 있으면 최초 1회 로드 후 렌더
     if (window.Store && Store.enabled() && sharedCompanies === null) {
       Store.list()

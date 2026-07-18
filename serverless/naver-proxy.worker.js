@@ -135,6 +135,17 @@ async function handleStore(request, url, env) {
     if (!raw) return json({ error: 'corpmap 없음' }, 404);
     return new Response(raw, { headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS } });
   }
+  if (action === 'triggers') {
+    if (request.method === 'POST') {
+      const body = await request.text();
+      if (body.length > 1e5) return json({ error: 'triggers가 너무 큽니다.' }, 413);
+      JSON.parse(body); // 유효성 검사
+      await kv.put('selltriggers', body);
+      return json({ ok: true });
+    }
+    const raw = await kv.get('selltriggers');
+    return new Response(raw || '{}', { headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS } });
+  }
   if (action === 'save' && request.method === 'POST') {
     const c = await request.json();
     if (!c || typeof c.id !== 'string' || !/^[a-z0-9_-]+$/.test(c.id)) return json({ error: '올바른 기업 id가 필요합니다.' }, 400);

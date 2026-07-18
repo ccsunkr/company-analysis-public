@@ -43,6 +43,8 @@
     save: function (c) { return call('save', c); },
     remove: function (id) { return call('delete', { id: id }); },
     corpmapGet: function () { return call('corpmap'); },
-    corpmapPut: function (map) { return call('corpmap', map); }
+    corpmapPut: function (map) { return call('corpmap', map); },
+    triggersGet: function () { return call('triggers'); },
+    triggersPut: function (obj) { return call('triggers', obj); }
   };
 })(window);
