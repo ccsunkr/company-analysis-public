@@ -174,6 +174,8 @@
   /* ==========================================================================
    * 2) 재무제표 — fnlttSinglAcnt (연도×보고서 순차 조회)
    * ========================================================================== */
+  // fnlttSinglAcntAll(전체 재무제표) — 주요계정(fnlttSinglAcnt)과 달리 매출원가·판관비·
+  // OCF·CAPEX·재고자산·매출채권까지 모두 포함. fs_div(CFS/OFS) 필수.
   function fetchFinancials(cfg, corpCode, years, onStatus) {
     var now = new Date(), curY = now.getFullYear(), startY = curY - years + 1;
     var jobs = [];
@@ -184,67 +186,105 @@
         jobs.push({ y: y, rp: rp });
       });
     }
-    var out = [], seq = Promise.resolve();
-    jobs.forEach(function (job, idx) {
-      seq = seq.then(function () {
-        onStatus('재무제표 조회 ' + (idx + 1) + '/' + jobs.length + ' — ' + job.y + '년 ' + job.rp.nm + ' 보고서…');
-        return apiJson(cfg, 'fnlttSinglAcnt', { corp_code: corpCode, bsns_year: String(job.y), reprt_code: job.rp.code })
-          .then(function (j) {
-            if (j.status === '000' && j.list && j.list.length) out.push({ y: job.y, q: job.rp.q, list: j.list });
-            else if (j.status !== '013' && j.status !== '000') throw dartError(j); // 013 = 데이터 없음(미제출) → skip
+    function run(fsDiv) {
+      var out = [], seq = Promise.resolve();
+      jobs.forEach(function (job, idx) {
+        seq = seq.then(function () {
+          onStatus('재무제표 조회 ' + (idx + 1) + '/' + jobs.length + ' — ' + job.y + '년 ' + job.rp.nm +
+            ' (' + (fsDiv === 'CFS' ? '연결' : '별도') + ')…');
+          return apiJson(cfg, 'fnlttSinglAcntAll', {
+            corp_code: corpCode, bsns_year: String(job.y), reprt_code: job.rp.code, fs_div: fsDiv
+          }).then(function (j) {
+            if (j.status === '000' && j.list && j.list.length) out.push({ y: job.y, q: job.rp.q, list: j.list, fs: fsDiv });
+            else if (j.status !== '013' && j.status !== '000') throw dartError(j); // 013 = 미제출 → skip
           });
+        });
       });
+      return seq.then(function () { return out; });
+    }
+    var first = cfg.statement === '별도' ? 'OFS' : 'CFS';
+    return run(first).then(function (out) {
+      if (out.length) return out;
+      // 연결이 없는 회사(또는 그 반대) → 반대 기준으로 재시도
+      onStatus((first === 'CFS' ? '연결' : '별도') + ' 재무제표가 없어 ' + (first === 'CFS' ? '별도' : '연결') + '로 재시도…');
+      return run(first === 'CFS' ? 'OFS' : 'CFS');
     });
-    return seq.then(function () { return out; });
   }
 
-  /* 조회 결과 → 분기별 {revenue, op, netIncome}(원) + 자본총계(최신) */
-  function extractQuarters(results, statement) {
-    var ACC = {
-      revenue: /^(매출액|수익\(매출액\)|영업수익)$/,
-      op: /^영업이익(\(손실\))?$/,
-      netIncome: /^당기순이익(\(손실\))?$/
-    };
-    var wantFs = statement === '별도' ? 'OFS' : 'CFS';
+  /* ---- 계정 매칭 ----
+   * 플로우(기간 누적) : 손익·현금흐름 → 누적(YTD)을 분기값으로 차감 변환
+   * 잔액(시점)       : 재무상태표 → 그 분기말 값 그대로
+   * account_id(IFRS 태그)를 우선 보고, 없으면 계정명으로 매칭한다. */
+  var FLOW = {
+    revenue:  { sj: ['IS', 'CIS'], id: /ifrs-full_Revenue$/, nm: /^(매출액|수익\(매출액\)|영업수익|매출)$/ },
+    cogs:     { sj: ['IS', 'CIS'], id: /ifrs-full_CostOfSales$/, nm: /^(매출원가|영업비용)$/ },
+    sga:      { sj: ['IS', 'CIS'], id: /SellingGeneralAdministrativeExpenses$/, nm: /^(판매비와관리비|판매비와일반관리비|판매관리비)$/ },
+    op:       { sj: ['IS', 'CIS'], id: /OperatingIncomeLoss$/, nm: /^영업이익(\(손실\))?$/ },
+    netIncome:{ sj: ['IS', 'CIS'], id: /ifrs-full_ProfitLoss$/, nm: /^(당기순이익|분기순이익|반기순이익)(\(손실\))?$/ },
+    ocf:      { sj: ['CF'], id: /CashFlowsFromUsedInOperatingActivities$/, nm: /^(영업활동현금흐름|영업활동으로인한현금흐름)$/ },
+    capexT:   { sj: ['CF'], id: /PurchaseOfPropertyPlantAndEquipment$/, nm: /^(유형자산의취득|유형자산의증가)$/ },
+    capexI:   { sj: ['CF'], id: /PurchaseOfIntangibleAssets$/, nm: /^(무형자산의취득|무형자산의증가)$/ }
+  };
+  var STOCK = {
+    inventory:   { id: /ifrs-full_Inventories$/, nm: /^재고자산$/ },
+    receivables: { id: /TradeAndOtherCurrentReceivables$/, nm: /^(매출채권|매출채권및기타채권|매출채권및기타유동채권|매출채권및기타수취채권)$/ },
+    equity:      { id: /ifrs-full_Equity$/, nm: /^자본총계$/ },
+    debt:        { id: /ifrs-full_Liabilities$/, nm: /^부채총계$/ }
+  };
+  function matches(spec, id, nm) { return (spec.id && spec.id.test(id)) || spec.nm.test(nm); }
+
+  /* 조회 결과 → 분기별 전 항목(원) + 자본·부채총계(최신) */
+  function extractQuarters(results) {
     var cum = {};       // 연도 → 계정 → {분기: 누적값}
-    var quarters = {};  // 'y-q' → {y, q, revenue, op, netIncome}
+    var quarters = {};  // 'y-q' → {y,q, ...}
     var equity = null, equityAt = -1, debt = null, debtAt = -1, fsUsed = null, latest = null;
 
     results.sort(function (a, b) { return (a.y * 10 + a.q) - (b.y * 10 + b.q); });
 
     results.forEach(function (res) {
-      var rows = res.list.filter(function (r) { return r.fs_div === wantFs; });
-      var fs = wantFs;
-      if (!rows.length) { rows = res.list.filter(function (r) { return r.fs_div === 'OFS'; }); fs = 'OFS'; }
+      var rows = res.list;
       if (!rows.length) return;
-      fsUsed = fsUsed || fs;
+      fsUsed = fsUsed || res.fs;
       var at = res.y * 10 + res.q;
       if (!latest || at > latest.y * 10 + latest.q) latest = { y: res.y, q: res.q };
+      var qk = res.y + '-' + res.q;
+      function q() { return quarters[qk] = quarters[qk] || { y: res.y, q: res.q }; }
 
       rows.forEach(function (r) {
         var nm = String(r.account_nm || '').replace(/\s+/g, '');
-        // 자본총계·부채총계 (재무상태표, 기말 잔액) — 가장 최근 보고서 값 사용
-        if (nm === '자본총계' && (!r.sj_div || r.sj_div === 'BS')) {
-          var ev = num(r.thstrm_amount);
-          if (ev != null && at > equityAt) { equity = ev; equityAt = at; }
-          return;
+        var id = String(r.account_id || '');
+        var sj = r.sj_div || '';
+
+        // ---- 잔액(재무상태표): 그 분기말 값 ----
+        if (!sj || sj === 'BS') {
+          Object.keys(STOCK).forEach(function (key) {
+            if (!matches(STOCK[key], id, nm)) return;
+            var v = num(r.thstrm_amount);
+            if (v == null) return;
+            if (key === 'equity') { if (at > equityAt) { equity = v; equityAt = at; } }
+            else if (key === 'debt') { if (at > debtAt) { debt = v; debtAt = at; } }
+            if (key === 'inventory' || key === 'receivables') {
+              var row = q();
+              if (row[key] == null) row[key] = v; // 첫 매칭(본표) 우선
+            }
+          });
         }
-        if (nm === '부채총계' && (!r.sj_div || r.sj_div === 'BS')) {
-          var dv = num(r.thstrm_amount);
-          if (dv != null && at > debtAt) { debt = dv; debtAt = at; }
-          return;
-        }
-        Object.keys(ACC).forEach(function (key) {
-          if (!ACC[key].test(nm)) return;
-          if (r.sj_div && r.sj_div !== 'IS' && r.sj_div !== 'CIS') return;
+
+        // ---- 플로우(손익·현금흐름): 누적 → 분기 ----
+        Object.keys(FLOW).forEach(function (key) {
+          var spec = FLOW[key];
+          if (sj && spec.sj.indexOf(sj) < 0) return;
+          if (!matches(spec, id, nm)) return;
           var add = num(r.thstrm_add_amount);   // 누적(제공 시)
           var amt = num(r.thstrm_amount);
           // thstrm_dt 시작일이 1월이면 누적, 아니면 해당 분기 3개월 값
           var startsJan = /(\d{4})\s*[.\-\/]\s*0?1\s*[.\-\/]\s*0?1/.test(String(r.thstrm_dt || '').split('~')[0]);
+          var isCF = spec.sj[0] === 'CF';
           var cumVal = null, isoVal = null;
           if (add != null) { cumVal = add; if (amt != null && amt !== add) isoVal = amt; }
           else if (amt != null) {
-            if (res.q === 1 || res.q === 4 || startsJan) cumVal = amt; // Q1=3개월=누적, 사업보고서=연간 누적
+            // 현금흐름표는 분기보고서에서도 항상 연초 누적(YTD)
+            if (isCF || res.q === 1 || res.q === 4 || startsJan) cumVal = amt;
             else isoVal = amt;
           }
           var yc = cum[res.y] || (cum[res.y] = {});
@@ -260,16 +300,21 @@
             if (res.q === 1) qv = cumVal;
             else if (kc[res.q - 1] != null) qv = cumVal - kc[res.q - 1];
           }
-          if (qv != null) {
-            var qk = res.y + '-' + res.q;
-            (quarters[qk] = quarters[qk] || { y: res.y, q: res.q })[key] = qv;
-          }
+          if (qv != null && q()[key] == null) q()[key] = qv;
         });
       });
     });
 
-    var list = Object.keys(quarters).map(function (k) { return quarters[k]; })
-      .sort(function (a, b) { return (a.y * 10 + a.q) - (b.y * 10 + b.q); });
+    // capexT + capexI → capex (취득은 유출이므로 절대값)
+    var list = Object.keys(quarters).map(function (k) {
+      var x = quarters[k];
+      if (x.capexT != null || x.capexI != null) {
+        x.capex = Math.abs(x.capexT || 0) + Math.abs(x.capexI || 0);
+      }
+      delete x.capexT; delete x.capexI;
+      return x;
+    }).sort(function (a, b) { return (a.y * 10 + a.q) - (b.y * 10 + b.q); });
+
     return { quarters: list, equity: equity, debt: debt, fsUsed: fsUsed, latest: latest };
   }
 
@@ -349,7 +394,7 @@
       if (!ent) throw new Error('종목코드 ' + cfg.ticker + '에 해당하는 DART 상장기업을 찾지 못했습니다.');
       return fetchFinancials(cfg, ent.c, cfg.years || 5, onStatus).then(function (results) {
         if (!results.length) throw new Error('조회된 재무제표가 없습니다. (조회 기간·인증키 확인)');
-        var fin = extractQuarters(results, cfg.statement);
+        var fin = extractQuarters(results);
         if (!fin.quarters.length) throw new Error('손익 계정(매출액·영업이익)을 찾지 못했습니다.');
         return fetchShares(cfg, ent.c, results, onStatus).then(function (shares) {
           return fetchDividends(cfg, ent.c, results, onStatus).then(function (dividend) {

@@ -943,7 +943,13 @@
         upsertQuarter(fmtQLabel(qr.y, qr.q), {
           revenue: wonToUnit(qr.revenue, unit),
           op: wonToUnit(qr.op, unit),
-          netIncome: wonToUnit(qr.netIncome, unit)
+          netIncome: wonToUnit(qr.netIncome, unit),
+          cogs: wonToUnit(qr.cogs, unit),
+          sga: wonToUnit(qr.sga, unit),
+          ocf: wonToUnit(qr.ocf, unit),
+          capex: wonToUnit(qr.capex, unit),
+          inventory: wonToUnit(qr.inventory, unit),
+          receivables: wonToUnit(qr.receivables, unit)
         });
       });
       if (res.equity != null) state.valuation.equity = wonToUnit(res.equity, unit);
@@ -963,7 +969,13 @@
         divTxt = ' · 배당 DPS <b>' + res.dividend.dps.toLocaleString('ko-KR') + '원</b>(' + res.dividend.year + '년' +
           (res.dividend.avgYield != null ? ', 목표배당수익률 ' + round2(res.dividend.avgYield) + '% = ' + res.dividend.nYields + '개년 평균' : '') + ')';
       }
-      st.innerHTML = '✓ <b>' + esc(res.corpName || code) + '</b> — 분기 손익 <b>' + res.quarters.length + '개</b>(' + fsTxt + ')' +
+      var filled = {};
+      ['cogs', 'sga', 'ocf', 'capex', 'inventory', 'receivables'].forEach(function (k) {
+        filled[k] = res.quarters.filter(function (x) { return x[k] != null; }).length;
+      });
+      var extraTxt = ' · 매출원가 ' + filled.cogs + '·판관비 ' + filled.sga + '·OCF ' + filled.ocf +
+        '·CAPEX ' + filled.capex + '·재고 ' + filled.inventory + '·매출채권 ' + filled.receivables + '개 분기';
+      st.innerHTML = '✓ <b>' + esc(res.corpName || code) + '</b> — 분기 <b>' + res.quarters.length + '개</b>(' + fsTxt + ')' + extraTxt +
         (res.equity != null ? ' · 자본총계 <b>' + wonToUnit(res.equity, unit).toLocaleString('ko-KR') + '</b> ' + esc(unit) : '') +
         (res.shares != null ? ' · 발행주식총수 <b>' + res.shares.toLocaleString('ko-KR') + '</b>주' : '') +
         divTxt + ' 반영. 이제 네이버에서 현재가만 받으면 ROE·PEG·PER이 계산됩니다.';

@@ -72,7 +72,7 @@
           </div>
 
           <div class="fieldset-title">⚡ 자동 입력 ① — OpenDART API (권장)</div>
-          <p class="small-note">위에서 <b>종목코드·재무 단위·연결/별도</b>를 설정한 뒤 버튼 하나로 <b>분기 매출액·영업이익·순이익 + 자본총계 + 발행주식총수</b>를 자동 수집합니다. → ROE·EPS성장률·PEG·PER이 바로 계산됩니다. API 키는 <a href="https://opendart.fss.or.kr" target="_blank">opendart.fss.or.kr</a>에서 무료 발급.</p>
+          <p class="small-note">위에서 <b>종목코드·재무 단위·연결/별도</b>를 설정한 뒤 버튼 하나로 <b>분기 재무 전 항목</b>(매출액·매출원가·판관비·영업이익·순이익·OCF·CAPEX·재고자산·매출채권 + 자본/부채총계·발행주식총수·배당)을 자동 수집합니다. → ROE·EPS성장률·PEG·PER·GPM·FCF·회전율이 바로 계산됩니다. API 키는 <a href="https://opendart.fss.or.kr" target="_blank">opendart.fss.or.kr</a>에서 무료 발급.</p>
           <div class="field">
             <label>OpenDART API 인증키 <span class="desc">한 번만 입력 — 이 브라우저에 저장됩니다</span></label>
             <input id="dart-key" type="password" placeholder="40자리 인증키" autocomplete="off">
@@ -88,7 +88,7 @@
           </div>
           <p class="small-note" id="dartapi-proxy-note"></p>
           <p class="small-note" id="dartapi-status"></p>
-          <p class="small-note">OpenDART 주요계정에 없는 <b>매출원가·판관비·OCF·CAPEX·재고자산·매출채권</b>은 아래 PDF 업로드 또는 수기로 보완하세요.</p>
+          <p class="small-note">매출액·매출원가·판관비·영업이익·순이익·OCF·CAPEX·재고자산·매출채권·자본/부채총계·발행주식수·배당까지 <b>전 항목 자동 수집</b>됩니다(전체 재무제표 API).</p>
 
           <div class="fieldset-title">⚡ 자동 입력 ② — DART 보고서 PDF · 네이버 시세</div>
           <p class="small-note">① 위에서 <b>재무 단위</b>와 <b>종목코드</b>를 먼저 설정 → ② DART <b>분기·반기·사업 보고서</b>를 <b>여러 개 한꺼번에</b> 선택해 업로드(연결재무제표 포함본) → ③ 네이버에서 현재가. 업로드 순서와 무관하게 <b>연도·분기 순으로 자동 정렬</b>해 적용하므로(사업보고서는 Q4 계산을 위해 맨 마지막), 2~3년치를 한 번에 올리면 됩니다.</p>
