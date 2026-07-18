@@ -51,21 +51,34 @@
     try { var c = JSON.parse(localStorage.getItem(CACHE_LS) || 'null'); if (c && c.ts && (Date.now() - c.ts) < TTL) return c.data; } catch (e) {}
     return null;
   }
+  var lastErr = '';
   function fetchOne(base, ticker, parts) {
     return fetch(base.replace(/\/+$/, '') + (base.indexOf('?') > -1 ? '&' : '?') + 'sa=' + ticker + '&parts=' + parts)
       .then(function (r) { return r.json(); })
-      .then(function (j) { return j && !j.error ? j : null; })
-      .catch(function () { return null; });
+      .then(function (j) {
+        if (j && !j.error && (j.income || j.cashflow)) return j;
+        // 구버전 워커는 ?sa= 를 모르고 네이버용 오류를 돌려준다 → 정확히 안내
+        if (j && j.error) lastErr = /종목코드|code\)/.test(j.error)
+          ? 'OLD_WORKER' : j.error;
+        else lastErr = '응답 형식 오류';
+        return null;
+      })
+      .catch(function (e) { lastErr = e.message || String(e); return null; });
   }
   function refresh(base, onStatus) {
     if (!base) return Promise.reject(new Error('프록시(공유 서버) URL이 필요합니다.'));
     onStatus && onStatus('거시 지표 수집 중… (stockanalysis.com)');
+    lastErr = '';
     var jobs = MACRO.hyperscalers.map(function (t) { return fetchOne(base, t, 'cashflow'); })
       .concat([fetchOne(base, MACRO.oem, 'income'), fetchOne(base, MACRO.leader, 'income')]);
     return Promise.all(jobs).then(function (arr) {
       var map = {};
       arr.forEach(function (j) { if (j) map[j.ticker] = j; });
-      if (!Object.keys(map).length) throw new Error('데이터를 가져오지 못했습니다(프록시가 최신 워커인지 확인).');
+      if (!Object.keys(map).length) {
+        throw new Error(lastErr === 'OLD_WORKER'
+          ? '프록시 워커가 구버전입니다(?sa= 미지원). Cloudflare 대시보드 → 워커 → Edit code → serverless/naver-proxy.worker.js 최신본 붙여넣기 → Deploy 하세요.'
+          : ('데이터를 가져오지 못했습니다' + (lastErr ? ' — ' + lastErr : '')));
+      }
       try { localStorage.setItem(CACHE_LS, JSON.stringify({ ts: Date.now(), data: map })); } catch (e) {}
       return map;
     });
