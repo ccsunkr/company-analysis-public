@@ -888,7 +888,10 @@
 
   // 편집기가 로컬 프록시(dart-local-proxy.py)에서 서빙되고 있으면 프록시 URL을 자동 설정
   function autodetectLocalProxy() {
-    if (getProxyUrl()) return;
+    // 사용자가 직접 지정한 값이 있으면 존중. (config.js의 워커 기본값은 무시 —
+    // 로컬 프록시에서 열었다면 OpenDART가 막는 해외 IP 대신 로컬을 써야 한다.)
+    var explicit = ''; try { explicit = (localStorage.getItem(PROXY_KEY) || '').trim(); } catch (e) {}
+    if (explicit) return;
     if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(location.origin)) return;
     fetch(location.origin + '/?ping=1').then(function (r) { return r.json(); }).then(function (j) {
       if (!j || j.service !== 'dart-local-proxy') return;
@@ -905,7 +908,11 @@
     if (!p) {
       note.innerHTML = '<span style="color:var(--red)">프록시 미설정 — 아래 「자동 입력 ②」의 <b>프록시 URL</b> 칸에 <code>http://127.0.0.1:8321</code>(로컬 프록시 실행 후) 또는 워커 주소를 입력하세요.</span>';
     } else if (/127\.0\.0\.1|localhost/.test(p)) {
-      note.innerHTML = '사용할 프록시: <b>' + esc(p) + '</b> (로컬 — <code>python serverless/dart-local-proxy.py</code>가 실행 중이어야 합니다)';
+      note.innerHTML = '사용할 프록시: <b>' + esc(p) + '</b> (로컬 — <code>python serverless/dart-local-proxy.py</code>가 실행 중이어야 합니다)' +
+        (location.protocol === 'file:'
+          ? '<br><span style="color:var(--red)">⚠ 지금 <b>file://</b>로 열려 있어 브라우저가 로컬 프록시 요청을 차단합니다 — <b><a href="' +
+            esc(p.replace(/\/+$/, '')) + '/editor.html">' + esc(p.replace(/\/+$/, '')) + '/editor.html</a></b> 로 여세요.</span>'
+          : '');
     } else {
       note.innerHTML = '사용할 프록시: <b>' + esc(p) + '</b> <span style="color:var(--amber)">— OpenDART는 해외 IP(Cloudflare 워커)를 차단하는 경우가 많습니다. 시간 초과가 나면 아래 프록시 URL 칸을 <code>http://127.0.0.1:8321</code>(로컬 프록시)로 바꾸세요.</span>';
     }
@@ -932,6 +939,13 @@
     if (!key) { st.innerHTML = '<span style="color:var(--red)">OpenDART API 인증키를 입력하세요. (opendart.fss.or.kr에서 무료 발급)</span>'; return; }
     var proxy = getProxyUrl();
     if (!proxy) { st.innerHTML = '<span style="color:var(--red)">OpenDART는 CORS를 막고 있어 <b>프록시 URL</b>이 필요합니다. 아래 프록시 URL에 Cloudflare Worker 주소를 입력하세요 (serverless/README.md, 2분 소요).</span>'; return; }
+    // file://로 연 페이지는 브라우저가 127.0.0.1 요청을 차단한다 → 프록시가 켜져 있어도 실패
+    if (location.protocol === 'file:' && /127\.0\.0\.1|localhost/.test(proxy)) {
+      st.innerHTML = '<span style="color:var(--red)">지금 편집기를 <b>파일(file://)로 직접</b> 열었습니다. 이 경우 브라우저가 로컬 프록시 요청을 차단합니다.<br>' +
+        '터미널에서 <code>python dart-local-proxy.py</code> 실행 후 <b><a href="' + esc(proxy.replace(/\/+$/, '')) + '/editor.html">' +
+        esc(proxy.replace(/\/+$/, '')) + '/editor.html</a></b> 주소로 다시 여세요.</span>';
+      return;
+    }
     var years = parseInt(document.getElementById('dart-years').value, 10) || 5;
     var unit = state.unit || '조원';
     btn.disabled = true;
