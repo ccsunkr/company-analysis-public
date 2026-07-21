@@ -189,6 +189,25 @@ def naver_history(code):
     return [{'label': x['label'], 'per': x['per'], 'pbr': x['pbr']} for x in merged]
 
 
+def naver_forward(annual):
+    """컨센서스(추정) 연간 → 포워드 EPS/PER/순이익(억원). 커버리지 없으면 None."""
+    fi = (annual or {}).get('financeInfo')
+    if not fi:
+        return None
+    cons = [t for t in (fi.get('trTitleList') or []) if t.get('isConsensus') == 'Y']
+    if not cons:
+        return None
+    key = str(cons[0].get('key') or '')
+    rows = {r.get('title'): (r.get('columns') or {}) for r in (fi.get('rowList') or [])}
+    def val(title):
+        c = rows.get(title, {}).get(key)
+        return to_num(c.get('value')) if isinstance(c, dict) else None
+    eps, per, ni = val('EPS'), val('PER'), val('당기순이익')
+    if eps is None and per is None and ni is None:
+        return None
+    return {'fyear': key[:4], 'eps': eps, 'per': per, 'bps': val('BPS'), 'pbr': val('PBR'), 'netIncomeEok': ni}
+
+
 def naver_quote(code):
     def safe(path):
         try:
@@ -197,6 +216,7 @@ def naver_quote(code):
             return None
     basic = safe(code + '/basic')
     intg = safe(code + '/integration')
+    forward = naver_forward(safe(code + '/finance/annual'))
     if not basic and not intg:
         raise RuntimeError('네이버 응답 없음')
     price = to_num((basic or {}).get('closePrice'))
@@ -211,7 +231,8 @@ def naver_quote(code):
     return {'code': code, 'name': name, 'price': price, 'shares': shares,
             'marketValue': market_value,
             'per': to_num(m.get('per')), 'pbr': to_num(m.get('pbr')),
-            'eps': to_num(m.get('eps')), 'bps': to_num(m.get('bps')), 'source': 'naver'}
+            'eps': to_num(m.get('eps')), 'bps': to_num(m.get('bps')),
+            'forward': forward, 'source': 'naver'}
 
 
 # ---------- stockanalysis.com (거시 AI 자금 사슬 트리거용) ----------

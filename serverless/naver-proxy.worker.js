@@ -90,6 +90,22 @@ function extractPerPbr(d, isQuarter) {
   return out;
 }
 
+// 컨센서스(추정) 연간 실적 → 포워드 EPS/PER/순이익(억원). 커버리지 없으면 null.
+function extractForward(annual) {
+  const fi = annual && annual.financeInfo;
+  if (!fi) return null;
+  const cons = (fi.trTitleList || []).filter(t => t.isConsensus === 'Y');
+  if (!cons.length) return null;
+  const t = cons[0];                       // 가장 가까운 추정 회계연도
+  const key = String(t.key || '');
+  const rows = {};
+  (fi.rowList || []).forEach(r => { rows[r.title] = r.columns || {}; });
+  const val = (title) => toNum(rows[title] && rows[title][key] && rows[title][key].value);
+  const eps = val('EPS'), per = val('PER'), netIncome = val('당기순이익'); // 순이익 단위: 억원
+  if (eps == null && per == null && netIncome == null) return null;
+  return { fyear: key.slice(0, 4), eps, per, bps: val('BPS'), pbr: val('PBR'), netIncomeEok: netIncome };
+}
+
 async function history(code) {
   const [aR, qR] = await Promise.allSettled([naver(code + '/finance/annual'), naver(code + '/finance/quarter')]);
   const a = aR.status === 'fulfilled' ? aR.value : null;
@@ -285,13 +301,15 @@ async function handle(request, env) {
   }
 
   try {
-    // basic: 현재가(closePrice). integration: 시가총액·PER·PBR·EPS·BPS.
-    const [basicR, intgR] = await Promise.allSettled([
+    // basic: 현재가(closePrice). integration: 시가총액·PER·PBR·EPS·BPS. annual: 컨센서스(포워드).
+    const [basicR, intgR, annR] = await Promise.allSettled([
       naver(code + '/basic'),
-      naver(code + '/integration')
+      naver(code + '/integration'),
+      naver(code + '/finance/annual')
     ]);
     const basic = basicR.status === 'fulfilled' ? basicR.value : null;
     const intg = intgR.status === 'fulfilled' ? intgR.value : null;
+    const forward = annR.status === 'fulfilled' ? extractForward(annR.value) : null;
     if (!intg && !basic) throw new Error('네이버 응답 없음');
 
     let price = toNum(basic && basic.closePrice);
@@ -307,7 +325,7 @@ async function handle(request, env) {
     const name = (basic && basic.stockName) || (intg && intg.stockName) || null;
     if (price == null && marketValue == null) return json({ error: '가격/시가총액 파싱 실패', code }, 502);
 
-    return json({ code, name, price, shares, marketValue, per, pbr, eps, bps, source: 'naver' });
+    return json({ code, name, price, shares, marketValue, per, pbr, eps, bps, forward, source: 'naver' });
   } catch (e) {
     return json({ error: String(e && e.message || e), code }, 502);
   }

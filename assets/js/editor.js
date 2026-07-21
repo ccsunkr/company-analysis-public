@@ -1012,10 +1012,23 @@
       // 네이버 주식수는 시총÷현재가 추정치 → DART로 넣은 정확값이 있으면 유지(덮지 않음)
       var keptDart = numOrNull(state.valuation.shares) != null;
       if (d.shares != null && !keptDart) { state.valuation.shares = d.shares; document.getElementById('v-shares').value = d.shares; }
+      // 포워드(컨센서스 추정) 순이익 → forwardNI (억원 → 재무 단위). 수기값이 없을 때만 채움.
+      var fwdTxt = '';
+      var fw = d.forward;
+      if (fw && numOrNull(fw.netIncomeEok) != null) {
+        var fwUnit = wonToUnit(fw.netIncomeEok * 1e8, state.unit || '조원'); // 억원 → 원 → 재무단위
+        if (numOrNull(state.valuation.forwardNI) == null) {
+          state.valuation.forwardNI = fwUnit; document.getElementById('v-forwardNI').value = fwUnit;
+        }
+        fwdTxt = ' · 포워드(컨센서스 ' + esc(fw.fyear || '') + ') 예상순이익 <b>' + fwUnit.toLocaleString('ko-KR') + '</b> ' + esc(state.unit || '조원') +
+          (fw.per != null ? ' → 포워드 PER <b>' + fw.per + '배</b>' : '') + (numOrNull(state.valuation.forwardNI) === fwUnit ? '' : ' (기존값 유지)');
+      } else if (fw === null) {
+        fwdTxt = ' · 컨센서스 없음(소외 중소형주 — 포워드는 직접 추정 [추정])';
+      }
       refresh();
       status.innerHTML = '가져옴: 현재가 <b>' + (d.price != null ? d.price.toLocaleString('ko-KR') : '?') + '원</b>' +
         (keptDart ? ' · 발행주식수는 DART 정확값 유지'
-          : (d.shares != null ? ' · 상장주식수(추정) <b>' + d.shares.toLocaleString('ko-KR') + '</b>' : ' · 상장주식수 미확인(수기 입력)'));
+          : (d.shares != null ? ' · 상장주식수(추정) <b>' + d.shares.toLocaleString('ko-KR') + '</b>' : ' · 상장주식수 미확인(수기 입력)')) + fwdTxt;
     }).catch(function (err) {
       var hint = getProxyUrl() ? '' : ' (안정적 조회를 원하면 위 <b>네이버 프록시 URL</b>에 Cloudflare Worker 주소를 입력하세요 — serverless/README.md)';
       status.innerHTML = '<span style="color:var(--red)">자동 조회 실패: ' + esc(err.message) +
@@ -1172,7 +1185,7 @@
         .then(function (j) {
           if (j.error) throw new Error(j.error);
           if (j.price == null && j.shares == null) throw new Error('빈 응답');
-          return { price: numOrNull(j.price), shares: numOrNull(j.shares), name: j.name };
+          return { price: numOrNull(j.price), shares: numOrNull(j.shares), name: j.name, forward: j.forward || null };
         }).catch(function () { return fetchNaverPublic(code); });
     }
     return fetchNaverPublic(code);
